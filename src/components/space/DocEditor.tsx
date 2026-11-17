@@ -426,7 +426,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
       const r = table.rows[i];
       const isHeader = r.parentElement?.tagName === 'THEAD' || (i === 0 && r.cells[0]?.tagName === 'TH');
       const newCell = document.createElement(isHeader ? 'th' : 'td');
-      newCell.innerHTML = isHeader ? `Header` : '<br>';
+      newCell.innerHTML = isHeader ? `Header ${r.cells.length + 1}` : '<br>';
 
       const targetCell = r.cells[colIndex];
       if (targetCell) {
@@ -854,8 +854,8 @@ export const DocEditor: React.FC<DocEditorProps> = ({
       </div>
 
       {/* 3. WYSIWYG DOCUMENT CANVAS (Google Docs Style Paper Container) */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-8 flex justify-center bg-black/[0.04] dark:bg-black/20">
-        <div className="w-full max-w-4xl min-h-[750px] p-8 sm:p-14 rounded-2xl bg-[var(--surface-bg)] border border-[var(--border-line)] shadow-xl flex flex-col">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-8 flex justify-center items-start bg-black/[0.04] dark:bg-black/20">
+        <div className="w-full max-w-4xl min-h-[850px] h-fit p-6 sm:p-12 rounded-2xl bg-[var(--surface-bg)] border border-[var(--border-line)] shadow-2xl flex flex-col mb-20 overflow-hidden">
           {/* True ContentEditable Canvas */}
           <div
             ref={editorRef}
