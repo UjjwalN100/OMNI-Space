@@ -11,24 +11,22 @@ import {
   Heading3, 
   List, 
   ListOrdered, 
-  CheckSquare, 
   Quote, 
-  Code, 
   Table, 
   Minus, 
   CheckCircle2, 
   Loader2, 
   Maximize2, 
   Minimize2, 
-  Eye, 
-  Columns, 
-  Edit3, 
   Download, 
   Printer, 
-  Copy,
-  Sparkles,
   FileText,
-  X
+  X,
+  Highlighter,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Pilcrow
 } from 'lucide-react';
 
 interface DocEditorProps {
@@ -36,6 +34,43 @@ interface DocEditorProps {
   onClose?: () => void;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+}
+
+// Convert legacy markdown / raw symbols into rich HTML on initial load
+function convertMarkdownToHtml(raw: string): string {
+  if (!raw || !raw.trim()) {
+    return '<p><br></p>';
+  }
+
+  // If already rich HTML, return directly
+  if (raw.includes('<p>') || raw.includes('<div>') || raw.includes('<h1>') || raw.includes('<h2>') || raw.includes('<h3>')) {
+    return raw;
+  }
+
+  let html = raw
+    // Clean up mixed raw markdown tags like ### **Single? Yes***italic text<u>underlined text~~strikethrough text~~</u>*
+    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+    .replace(/\*\*\*(.*?)\*\*\*/gim, '<b><i>$1</i></b>')
+    .replace(/\*\*(.*?)\*\*/gim, '<b>$1</b>')
+    .replace(/\*(.*?)\*/gim, '<i>$1</i>')
+    .replace(/~~(.*?)~~/gim, '<strike>$1</strike>')
+    .replace(/^\> (.*$)/gim, '<blockquote>$1</blockquote>')
+    .replace(/^---$/gim, '<hr>');
+
+  // Wrap lines in <p> if not already heading or blockquote
+  const lines = html.split('\n');
+  const wrapped = lines.map(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return '<p><br></p>';
+    if (trimmed.startsWith('<h1') || trimmed.startsWith('<h2') || trimmed.startsWith('<h3') || trimmed.startsWith('<blockquote') || trimmed.startsWith('<hr')) {
+      return trimmed;
+    }
+    return `<p>${line}</p>`;
+  });
+
+  return wrapped.join('');
 }
 
 export const DocEditor: React.FC<DocEditorProps> = ({
@@ -47,129 +82,144 @@ export const DocEditor: React.FC<DocEditorProps> = ({
   const { updateFileContent, downloadFile } = useSpace();
 
   const [title, setTitle] = useState(file.name);
-  const [content, setContent] = useState(file.content || '');
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'idle'>('saved');
-  const [viewMode, setViewMode] = useState<'edit' | 'split' | 'preview'>('edit');
-  const [copiedCodeIdx, setCopiedCodeIdx] = useState<number | null>(null);
+  const [wordCount, setWordCount] = useState(0);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Active toolbar formatting states (bold, italic, underline, etc.)
+  const [activeStyles, setActiveStyles] = useState({
+    bold: false,
+    italic: false,
+    underline: false,
+    strike: false,
+    h1: false,
+    h2: false,
+    h3: false,
+    ul: false,
+    ol: false,
+    blockquote: false
+  });
+
+  const editorRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Sync state if file changes
+  // Compute word count from inner text
+  const updateMetrics = (text: string) => {
+    const cleanText = text.trim();
+    const count = cleanText.length > 0 ? cleanText.split(/\s+/).length : 0;
+    setWordCount(count);
+  };
+
+  // Initialize editor content once on load
   useEffect(() => {
     setTitle(file.name);
-    setContent(file.content || '');
     setSaveStatus('saved');
+    if (editorRef.current) {
+      const initialHtml = convertMarkdownToHtml(file.content || '');
+      editorRef.current.innerHTML = initialHtml;
+      updateMetrics(editorRef.current.innerText || '');
+    }
   }, [file.id]);
 
-  // Debounced auto-save function (800ms)
-  const triggerAutoSave = useCallback((newContent: string, newTitle: string) => {
+  // Debounced auto-save (800ms)
+  const triggerAutoSave = useCallback((newTitle: string) => {
     setSaveStatus('saving');
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
 
     saveTimeoutRef.current = setTimeout(() => {
-      updateFileContent(file.id, newContent, newTitle);
+      const currentHtml = editorRef.current ? editorRef.current.innerHTML : '';
+      updateFileContent(file.id, currentHtml, newTitle);
       setSaveStatus('saved');
     }, 800);
   }, [file.id, updateFileContent]);
 
-  // Handle content typing
-  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const nextContent = e.target.value;
-    setContent(nextContent);
-    triggerAutoSave(nextContent, title);
+  // Handle typing inside contentEditable
+  const handleInput = () => {
+    if (editorRef.current) {
+      updateMetrics(editorRef.current.innerText || '');
+    }
+    triggerAutoSave(title);
+    updateActiveStyles();
   };
 
   // Handle title edit
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextTitle = e.target.value;
     setTitle(nextTitle);
-    triggerAutoSave(content, nextTitle);
+    triggerAutoSave(nextTitle);
   };
 
-  // Manual save
-  const handleManualSave = () => {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    setSaveStatus('saving');
-    updateFileContent(file.id, content, title);
-    setTimeout(() => setSaveStatus('saved'), 300);
-  };
+  // Update active toolbar button highlights based on cursor selection
+  const updateActiveStyles = () => {
+    try {
+      const isBold = document.queryCommandState('bold');
+      const isItalic = document.queryCommandState('italic');
+      const isUnderline = document.queryCommandState('underline');
+      const isStrike = document.queryCommandState('strikeThrough');
+      const isUl = document.queryCommandState('insertUnorderedList');
+      const isOl = document.queryCommandState('insertOrderedList');
 
-  // Formatting helpers to insert / wrap selection
-  const applyFormat = (prefix: string, suffix: string = '', defaultText: string = 'text') => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
+      // Check current block format (h1, h2, h3, etc.)
+      const blockValue = (document.queryCommandValue('formatBlock') || '').toLowerCase();
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selected = content.substring(start, end);
-
-    const replacement = selected.length > 0 
-      ? `${prefix}${selected}${suffix}` 
-      : `${prefix}${defaultText}${suffix}`;
-
-    const newContent = content.substring(0, start) + replacement + content.substring(end);
-    setContent(newContent);
-    triggerAutoSave(newContent, title);
-
-    // Reposition cursor inside wrapped text
-    setTimeout(() => {
-      textarea.focus();
-      const newCursorPos = selected.length > 0 
-        ? start + replacement.length 
-        : start + prefix.length + defaultText.length;
-      textarea.setSelectionRange(newCursorPos, newCursorPos);
-    }, 10);
-  };
-
-  // Line-prefix helpers (Headings, lists, quotes)
-  const applyLinePrefix = (prefix: string) => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-
-    // Find the beginning of current line
-    const lastNewline = content.lastIndexOf('\n', start - 1);
-    const lineStart = lastNewline === -1 ? 0 : lastNewline + 1;
-
-    const newContent = content.substring(0, lineStart) + prefix + content.substring(lineStart);
-    setContent(newContent);
-    triggerAutoSave(newContent, title);
-
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(start + prefix.length, end + prefix.length);
-    }, 10);
-  };
-
-  // Insert Table helper
-  const insertTable = () => {
-    const tableTemplate = `\n| Column 1 | Column 2 | Column 3 |\n| :--- | :--- | :--- |\n| Data A1 | Data B1 | Data C1 |\n| Data A2 | Data B2 | Data C2 |\n\n`;
-    applyFormat(tableTemplate, '', '');
-  };
-
-  // Insert Callout helper
-  const insertCallout = () => {
-    const calloutTemplate = `\n> 💡 **Key Takeaway**:\n> Add your summary, actionable insights, or meeting notes here.\n\n`;
-    applyFormat(calloutTemplate, '', '');
-  };
-
-  // Keyboard shortcut listener (Ctrl+B, Ctrl+I, Ctrl+S)
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
-      e.preventDefault();
-      applyFormat('**', '**', 'bold text');
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') {
-      e.preventDefault();
-      applyFormat('*', '*', 'italic text');
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      handleManualSave();
+      setActiveStyles({
+        bold: isBold,
+        italic: isItalic,
+        underline: isUnderline,
+        strike: isStrike,
+        h1: blockValue === 'h1',
+        h2: blockValue === 'h2',
+        h3: blockValue === 'h3',
+        ul: isUl,
+        ol: isOl,
+        blockquote: blockValue === 'blockquote'
+      });
+    } catch {
+      // Ignore if document selection is unavailable
     }
+  };
+
+  // Execute rich-text format command
+  const executeCommand = (command: string, value: string | undefined = undefined) => {
+    if (editorRef.current) {
+      editorRef.current.focus();
+    }
+    document.execCommand(command, false, value);
+    if (editorRef.current) {
+      updateMetrics(editorRef.current.innerText || '');
+    }
+    triggerAutoSave(title);
+    updateActiveStyles();
+  };
+
+  // Insert real HTML Table
+  const insertTable = () => {
+    const tableHtml = `
+      <table class="omni-doc-table">
+        <thead>
+          <tr>
+            <th>Column 1</th>
+            <th>Column 2</th>
+            <th>Column 3</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Data 1</td>
+            <td>Data 2</td>
+            <td>Data 3</td>
+          </tr>
+          <tr>
+            <td>Data 4</td>
+            <td>Data 5</td>
+            <td>Data 6</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><br></p>
+    `;
+    executeCommand('insertHTML', tableHtml);
   };
 
   // Print document
@@ -177,242 +227,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
     window.print();
   };
 
-  // Metrics calculation
-  const wordCount = content.trim().length > 0 ? content.trim().split(/\s+/).length : 0;
-  const charCount = content.length;
   const readTimeMinutes = Math.max(1, Math.ceil(wordCount / 200));
-
-  // Interactive Checklist toggle inside preview
-  const handleToggleTaskInPreview = (taskLineIndex: number) => {
-    const lines = content.split('\n');
-    let taskCount = 0;
-
-    const updatedLines = lines.map(line => {
-      const match = line.match(/^(\s*-\s*\[)([ xX])(\]\s*.*)$/);
-      if (match) {
-        if (taskCount === taskLineIndex) {
-          const isChecked = match[2].toLowerCase() === 'x';
-          const newStatus = isChecked ? ' ' : 'x';
-          taskCount++;
-          return `${match[1]}${newStatus}${match[3]}`;
-        }
-        taskCount++;
-      }
-      return line;
-    });
-
-    const newContent = updatedLines.join('\n');
-    setContent(newContent);
-    triggerAutoSave(newContent, title);
-  };
-
-  // Copy code block helper
-  const handleCopyCode = (codeText: string, idx: number) => {
-    navigator.clipboard.writeText(codeText);
-    setCopiedCodeIdx(idx);
-    setTimeout(() => setCopiedCodeIdx(null), 2000);
-  };
-
-  // Custom Rich Markdown Renderer
-  const renderFormattedPreview = () => {
-    if (!content.trim()) {
-      return (
-        <div className="text-center py-24 text-slate-400">
-          <FileText className="w-12 h-12 mx-auto mb-3 opacity-30 text-[#16A085]" />
-          <p className="text-sm font-medium">This document is blank.</p>
-          <p className="text-xs text-slate-500 mt-1">Start typing or use the formatting toolbar above to write content.</p>
-        </div>
-      );
-    }
-
-    const lines = content.split('\n');
-    const elements: React.ReactNode[] = [];
-    let inCodeBlock = false;
-    let codeBuffer: string[] = [];
-    let codeBlockIdx = 0;
-    let inTable = false;
-    let tableBuffer: string[] = [];
-    let taskIdx = 0;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-
-      // Code Block handling
-      if (line.trim().startsWith('```')) {
-        if (inCodeBlock) {
-          const codeString = codeBuffer.join('\n');
-          const currentIdx = codeBlockIdx++;
-          elements.push(
-            <div key={`code-${i}`} className="my-4 rounded-2xl bg-[#0F141C] border border-white/10 overflow-hidden shadow-lg group">
-              <div className="flex items-center justify-between px-4 py-2 bg-white/[0.04] border-b border-white/5 text-[11px] text-slate-400 font-mono">
-                <span>Code Block</span>
-                <button
-                  onClick={() => handleCopyCode(codeString, currentIdx)}
-                  className="flex items-center gap-1 hover:text-white transition"
-                >
-                  <Copy className="w-3 h-3" />
-                  <span>{copiedCodeIdx === currentIdx ? 'Copied!' : 'Copy'}</span>
-                </button>
-              </div>
-              <pre className="p-4 text-xs font-mono text-emerald-300 overflow-x-auto leading-relaxed">
-                <code>{codeString}</code>
-              </pre>
-            </div>
-          );
-          codeBuffer = [];
-          inCodeBlock = false;
-        } else {
-          inCodeBlock = true;
-        }
-        continue;
-      }
-
-      if (inCodeBlock) {
-        codeBuffer.push(line);
-        continue;
-      }
-
-      // Markdown Table handling
-      if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
-        inTable = true;
-        tableBuffer.push(line);
-        if (i === lines.length - 1 || !lines[i + 1]?.trim().startsWith('|')) {
-          // Render table
-          const rawRows = tableBuffer.map(r => r.split('|').filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).map(c => c.trim()));
-          const headers = rawRows[0] || [];
-          const dataRows = rawRows.slice(2); // Skip separator row
-
-          elements.push(
-            <div key={`table-${i}`} className="my-5 overflow-x-auto rounded-2xl border border-[var(--border-line)] shadow-sm">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-[#16A085]/10 border-b border-[var(--border-line)] text-[#16A085] font-bold">
-                    {headers.map((h, hIdx) => (
-                      <th key={hIdx} className="py-2.5 px-4">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-line)]">
-                  {dataRows.map((row, rIdx) => (
-                    <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-white/[0.01]' : 'bg-white/[0.03]'}>
-                      {row.map((cell, cIdx) => (
-                        <td key={cIdx} className="py-2 px-4 text-[var(--text-main)]">{cell}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
-          tableBuffer = [];
-          inTable = false;
-        }
-        continue;
-      }
-
-      // Horizontal Divider
-      if (line.trim() === '---' || line.trim() === '***') {
-        elements.push(<hr key={`hr-${i}`} className="my-6 border-[var(--border-line)]" />);
-        continue;
-      }
-
-      // Headings
-      if (line.startsWith('# ')) {
-        elements.push(
-          <h1 key={`h1-${i}`} className="text-2xl sm:text-3xl font-extrabold text-[var(--text-main)] tracking-tight mt-6 mb-3 pb-2 border-b border-[var(--border-line)]">
-            {line.replace('# ', '')}
-          </h1>
-        );
-        continue;
-      }
-      if (line.startsWith('## ')) {
-        elements.push(
-          <h2 key={`h2-${i}`} className="text-xl sm:text-2xl font-bold text-[var(--text-main)] tracking-tight mt-5 mb-2">
-            {line.replace('## ', '')}
-          </h2>
-        );
-        continue;
-      }
-      if (line.startsWith('### ')) {
-        elements.push(
-          <h3 key={`h3-${i}`} className="text-base sm:text-lg font-bold text-[var(--text-main)] mt-4 mb-2">
-            {line.replace('### ', '')}
-          </h3>
-        );
-        continue;
-      }
-
-      // Checklists / Tasks
-      const taskMatch = line.match(/^(\s*)-\s*\[([ xX])\]\s*(.*)$/);
-      if (taskMatch) {
-        const isChecked = taskMatch[2].toLowerCase() === 'x';
-        const taskText = taskMatch[3];
-        const currentTaskIdx = taskIdx++;
-        elements.push(
-          <div 
-            key={`task-${i}`} 
-            onClick={() => handleToggleTaskInPreview(currentTaskIdx)}
-            className="flex items-center gap-3 py-1 cursor-pointer group select-none transition-colors"
-          >
-            <div className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all ${
-              isChecked 
-                ? 'bg-[#16A085] border-[#16A085] text-white shadow-xs' 
-                : 'border-slate-500 hover:border-[#16A085]'
-            }`}>
-              {isChecked && <CheckCircle2 className="w-3.5 h-3.5" />}
-            </div>
-            <span className={`text-xs sm:text-sm ${
-              isChecked 
-                ? 'line-through text-slate-500 dark:text-slate-500' 
-                : 'text-[var(--text-main)] group-hover:text-[#16A085]'
-            }`}>
-              {taskText}
-            </span>
-          </div>
-        );
-        continue;
-      }
-
-      // Bullet Lists
-      if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
-        elements.push(
-          <div key={`bullet-${i}`} className="flex items-start gap-2.5 py-0.5 text-xs sm:text-sm text-[var(--text-main)]">
-            <span className="text-[#16A085] font-bold mt-1 text-xs">•</span>
-            <span className="leading-relaxed">{line.replace(/^(\s*[-*]\s+)/, '')}</span>
-          </div>
-        );
-        continue;
-      }
-
-      // Blockquote / Callouts
-      if (line.startsWith('> ')) {
-        elements.push(
-          <blockquote 
-            key={`quote-${i}`} 
-            className="my-3 pl-4 py-2 border-l-4 border-[#16A085] bg-[#16A085]/5 rounded-r-xl text-xs sm:text-sm italic text-[var(--text-main)] leading-relaxed"
-          >
-            {line.replace('> ', '')}
-          </blockquote>
-        );
-        continue;
-      }
-
-      // Empty line spacer
-      if (!line.trim()) {
-        elements.push(<div key={`empty-${i}`} className="h-3" />);
-        continue;
-      }
-
-      // Normal paragraph
-      elements.push(
-        <p key={`p-${i}`} className="text-xs sm:text-sm text-[var(--text-main)] leading-relaxed my-1">
-          {line}
-        </p>
-      );
-    }
-
-    return <div className="space-y-1 font-sans">{elements}</div>;
-  };
 
   return (
     <div className={`flex flex-col h-full bg-[var(--surface-bg)] text-[var(--text-main)] select-text ${
@@ -461,40 +276,6 @@ export const DocEditor: React.FC<DocEditorProps> = ({
             <span>{readTimeMinutes} min read</span>
           </div>
 
-          {/* View Mode Switcher */}
-          <div className="flex items-center p-0.5 rounded-xl bg-white/[0.04] border border-[var(--border-line)]">
-            <button
-              onClick={() => setViewMode('edit')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
-                viewMode === 'edit' ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Editor Only"
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Edit</span>
-            </button>
-            <button
-              onClick={() => setViewMode('split')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
-                viewMode === 'split' ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Split View (Editor + Live Preview)"
-            >
-              <Columns className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Split</span>
-            </button>
-            <button
-              onClick={() => setViewMode('preview')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
-                viewMode === 'preview' ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Reading View"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Preview</span>
-            </button>
-          </div>
-
           {/* Print / Export button */}
           <button
             onClick={handlePrint}
@@ -537,158 +318,198 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </div>
       </div>
 
-      {/* 2. FORMATTING TOOLBAR RIBBON (Visible in Edit & Split mode) */}
-      {viewMode !== 'preview' && (
-        <div className="border-b border-[var(--border-line)] px-4 py-2 bg-white/[0.02] flex items-center gap-1 flex-wrap overflow-x-auto text-xs shrink-0 select-none">
-          {/* Headings */}
-          <button
-            onClick={() => applyLinePrefix('# ')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Heading 1"
-          >
-            <Heading1 className="w-4 h-4 text-blue-400" />
-          </button>
-          <button
-            onClick={() => applyLinePrefix('## ')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Heading 2"
-          >
-            <Heading2 className="w-4 h-4 text-emerald-400" />
-          </button>
-          <button
-            onClick={() => applyLinePrefix('### ')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Heading 3"
-          >
-            <Heading3 className="w-4 h-4 text-amber-400" />
-          </button>
+      {/* 2. WYSIWYG FORMATTING TOOLBAR RIBBON */}
+      <div className="border-b border-[var(--border-line)] px-4 py-2 bg-white/[0.02] flex items-center gap-1 flex-wrap overflow-x-auto text-xs shrink-0 select-none">
+        {/* Headings */}
+        <button
+          onClick={() => executeCommand('formatBlock', activeStyles.h1 ? '<p>' : '<h1>')}
+          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition font-bold ${
+            activeStyles.h1 ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Heading 1"
+        >
+          <Heading1 className="w-3.5 h-3.5 text-blue-400" />
+          <span className="text-[11px]">H1</span>
+        </button>
 
-          <div className="h-4 w-px bg-white/10 mx-1" />
+        <button
+          onClick={() => executeCommand('formatBlock', activeStyles.h2 ? '<p>' : '<h2>')}
+          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition font-bold ${
+            activeStyles.h2 ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Heading 2"
+        >
+          <Heading2 className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="text-[11px]">H2</span>
+        </button>
 
-          {/* Inline Styles */}
-          <button
-            onClick={() => applyFormat('**', '**', 'bold text')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition font-bold"
-            title="Bold (Ctrl+B)"
-          >
-            <Bold className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => applyFormat('*', '*', 'italic text')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition italic"
-            title="Italic (Ctrl+I)"
-          >
-            <Italic className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => applyFormat('<u>', '</u>', 'underlined text')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Underline"
-          >
-            <Underline className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => applyFormat('~~', '~~', 'strikethrough text')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Strikethrough"
-          >
-            <Strikethrough className="w-4 h-4" />
-          </button>
+        <button
+          onClick={() => executeCommand('formatBlock', activeStyles.h3 ? '<p>' : '<h3>')}
+          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition font-bold ${
+            activeStyles.h3 ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Heading 3"
+        >
+          <Heading3 className="w-3.5 h-3.5 text-amber-400" />
+          <span className="text-[11px]">H3</span>
+        </button>
 
-          <div className="h-4 w-px bg-white/10 mx-1" />
+        <button
+          onClick={() => executeCommand('formatBlock', '<p>')}
+          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
+          title="Normal Paragraph"
+        >
+          <Pilcrow className="w-4 h-4" />
+        </button>
 
-          {/* Lists & Tasks */}
-          <button
-            onClick={() => applyLinePrefix('- ')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Bullet List"
-          >
-            <List className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => applyLinePrefix('1. ')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Numbered List"
-          >
-            <ListOrdered className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => applyLinePrefix('- [ ] ')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Task Checklist"
-          >
-            <CheckSquare className="w-4 h-4 text-[#16A085]" />
-          </button>
+        <div className="h-4 w-px bg-white/10 mx-1" />
 
-          <div className="h-4 w-px bg-white/10 mx-1" />
+        {/* Inline Formatting (Bold, Italic, Underline, Strikethrough, Highlight) */}
+        <button
+          onClick={() => executeCommand('bold')}
+          className={`p-1.5 rounded-lg transition font-bold ${
+            activeStyles.bold ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Bold (Ctrl+B)"
+        >
+          <Bold className="w-4 h-4" />
+        </button>
 
-          {/* Inserts: Table, Quote, Code, Callout, Rule */}
-          <button
-            onClick={insertTable}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Insert Table Grid"
-          >
-            <Table className="w-4 h-4 text-emerald-400" />
-            <span className="hidden sm:inline text-[11px]">Table</span>
-          </button>
-          <button
-            onClick={() => applyLinePrefix('> ')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Blockquote"
-          >
-            <Quote className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => applyFormat('```\n', '\n```', 'code here')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Code Block"
-          >
-            <Code className="w-4 h-4 text-purple-400" />
-          </button>
-          <button
-            onClick={insertCallout}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Callout Box"
-          >
-            <Sparkles className="w-4 h-4 text-amber-400" />
-          </button>
-          <button
-            onClick={() => applyFormat('\n---\n', '', '')}
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
-            title="Divider Line"
-          >
-            <Minus className="w-4 h-4" />
-          </button>
+        <button
+          onClick={() => executeCommand('italic')}
+          className={`p-1.5 rounded-lg transition italic ${
+            activeStyles.italic ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Italic (Ctrl+I)"
+        >
+          <Italic className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={() => executeCommand('underline')}
+          className={`p-1.5 rounded-lg transition ${
+            activeStyles.underline ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Underline (Ctrl+U)"
+        >
+          <Underline className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={() => executeCommand('strikeThrough')}
+          className={`p-1.5 rounded-lg transition ${
+            activeStyles.strike ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Strikethrough"
+        >
+          <Strikethrough className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={() => executeCommand('hiliteColor', '#f59e0b40')}
+          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
+          title="Highlight Text"
+        >
+          <Highlighter className="w-4 h-4 text-amber-400" />
+        </button>
+
+        <div className="h-4 w-px bg-white/10 mx-1" />
+
+        {/* Lists */}
+        <button
+          onClick={() => executeCommand('insertUnorderedList')}
+          className={`p-1.5 rounded-lg transition ${
+            activeStyles.ul ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Bullet List"
+        >
+          <List className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={() => executeCommand('insertOrderedList')}
+          className={`p-1.5 rounded-lg transition ${
+            activeStyles.ol ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Numbered List"
+        >
+          <ListOrdered className="w-4 h-4" />
+        </button>
+
+        <div className="h-4 w-px bg-white/10 mx-1" />
+
+        {/* Text Alignment */}
+        <button
+          onClick={() => executeCommand('justifyLeft')}
+          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
+          title="Align Left"
+        >
+          <AlignLeft className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={() => executeCommand('justifyCenter')}
+          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
+          title="Align Center"
+        >
+          <AlignCenter className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={() => executeCommand('justifyRight')}
+          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
+          title="Align Right"
+        >
+          <AlignRight className="w-4 h-4" />
+        </button>
+
+        <div className="h-4 w-px bg-white/10 mx-1" />
+
+        {/* Insert Elements: Table, Quote, Horizontal Rule */}
+        <button
+          onClick={insertTable}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition font-medium"
+          title="Insert Table Grid"
+        >
+          <Table className="w-4 h-4 text-emerald-400" />
+          <span className="text-[11px]">Table</span>
+        </button>
+
+        <button
+          onClick={() => executeCommand('formatBlock', activeStyles.blockquote ? '<p>' : '<blockquote>')}
+          className={`p-1.5 rounded-lg transition ${
+            activeStyles.blockquote ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
+          }`}
+          title="Blockquote"
+        >
+          <Quote className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={() => executeCommand('insertHorizontalRule')}
+          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
+          title="Divider Line"
+        >
+          <Minus className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* 3. WYSIWYG DOCUMENT CANVAS (Google Docs Style Paper Container) */}
+      <div className="flex-1 overflow-y-auto p-4 sm:p-8 flex justify-center bg-black/[0.04] dark:bg-black/20">
+        <div className="w-full max-w-4xl min-h-[750px] p-8 sm:p-14 rounded-2xl bg-[var(--surface-bg)] border border-[var(--border-line)] shadow-xl flex flex-col">
+          {/* True ContentEditable Canvas */}
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onInput={handleInput}
+            onKeyUp={updateActiveStyles}
+            onMouseUp={updateActiveStyles}
+            onSelect={updateActiveStyles}
+            className="omni-doc-canvas flex-1 w-full text-[var(--text-main)] font-sans text-sm sm:text-base leading-relaxed focus:outline-none"
+            spellCheck="true"
+          />
         </div>
-      )}
-
-      {/* 3. DOCUMENT BODY CANVAS */}
-      <div className="flex-1 overflow-hidden flex">
-        {/* Editor Pane */}
-        {viewMode !== 'preview' && (
-          <div className={`h-full flex flex-col ${viewMode === 'split' ? 'w-1/2 border-r border-[var(--border-line)]' : 'w-full'}`}>
-            <textarea
-              ref={textareaRef}
-              value={content}
-              onChange={handleContentChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Start writing your thoughts, documentation, plans, or notes..."
-              className="flex-1 w-full p-6 sm:p-8 bg-transparent text-[var(--text-main)] font-mono text-xs sm:text-sm leading-relaxed resize-none focus:outline-none focus:ring-0 overflow-y-auto selection:bg-[#16A085]/30"
-              spellCheck="false"
-            />
-          </div>
-        )}
-
-        {/* Formatted Preview Pane */}
-        {viewMode !== 'edit' && (
-          <div className={`h-full overflow-y-auto p-6 sm:p-10 ${
-            viewMode === 'split' ? 'w-1/2' : 'w-full max-w-4xl mx-auto'
-          }`}>
-            <div className="max-w-3xl mx-auto">
-              {renderFormattedPreview()}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -30,3 +30,128 @@ body {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
+
+/* WYSIWYG Document Editor Typography */
+.omni-doc-canvas {
+  outline: none;
+  min-height: 100%;
+}
+
+.omni-doc-canvas h1 {
+  font-size: 1.875rem;
+  line-height: 2.25rem;
+  font-weight: 800;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-line);
+  color: var(--text-main);
+}
+
+.omni-doc-canvas h2 {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 700;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-main);
+}
+
+.omni-doc-canvas h3 {
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-main);
+}
+
+.omni-doc-canvas p {
+  margin-top: 0.35rem;
+  margin-bottom: 0.35rem;
+  line-height: 1.7;
+  color: var(--text-main);
+}
+
+.omni-doc-canvas b, 
+.omni-doc-canvas strong {
+  font-weight: 700;
+}
+
+.omni-doc-canvas i, 
+.omni-doc-canvas em {
+  font-style: italic;
+}
+
+.omni-doc-canvas u {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.omni-doc-canvas strike,
+.omni-doc-canvas s,
+.omni-doc-canvas del {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.omni-doc-canvas ul {
+  list-style-type: disc;
+  padding-left: 1.75rem;
+  margin: 0.5rem 0;
+}
+
+.omni-doc-canvas ol {
+  list-style-type: decimal;
+  padding-left: 1.75rem;
+  margin: 0.5rem 0;
+}
+
+.omni-doc-canvas li {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.omni-doc-canvas blockquote {
+  border-left: 4px solid #16A085;
+  padding: 0.5rem 1rem;
+  margin: 0.75rem 0;
+  font-style: italic;
+  background: rgba(22, 160, 133, 0.06);
+  border-radius: 0 0.75rem 0.75rem 0;
+}
+
+.omni-doc-canvas table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.25rem 0;
+  border: 1px solid var(--border-line);
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.omni-doc-canvas th,
+.omni-doc-canvas td {
+  border: 1px solid var(--border-line);
+  padding: 0.6rem 0.9rem;
+  text-align: left;
+}
+
+.omni-doc-canvas th {
+  background: rgba(22, 160, 133, 0.12);
+  font-weight: 700;
+  color: #16A085;
+}
+
+.omni-doc-canvas hr {
+  margin: 1.5rem 0;
+  border: 0;
+  border-top: 1px solid var(--border-line);
+}
+
+.omni-doc-canvas mark {
+  background-color: rgba(245, 158, 11, 0.25);
+  color: inherit;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+}
