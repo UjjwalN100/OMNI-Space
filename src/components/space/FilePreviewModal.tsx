@@ -15,8 +15,9 @@ import {
 } from 'lucide-react';
 
 export const FilePreviewModal: React.FC = () => {
-  const { previewFile, setPreviewFile, downloadFile } = useSpace();
+  const { previewFile, setPreviewFile, downloadFile, isEditMode, setIsEditMode, updateFileContent } = useSpace();
   const [content, setContent] = useState<string>('');
+  const [fileName, setFileName] = useState<string>('');
   const [isEditing, setIsEditing] = useState(false);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
 
@@ -24,12 +25,14 @@ export const FilePreviewModal: React.FC = () => {
     if (!previewFile) {
       setSignedUrl(null);
       setContent('');
+      setFileName('');
       setIsEditing(false);
       return;
     }
 
     setContent(previewFile.content || '');
-    setIsEditing(false);
+    setFileName(previewFile.name || '');
+    setIsEditing(isEditMode);
 
     if (previewFile.r2StorageKey) {
       supabase.storage
@@ -43,14 +46,14 @@ export const FilePreviewModal: React.FC = () => {
     } else {
       setSignedUrl(null);
     }
-  }, [previewFile]);
+  }, [previewFile, isEditMode]);
 
   if (!previewFile) return null;
 
   const handleSave = () => {
-    previewFile.content = content;
-    previewFile.updatedAt = new Date().toISOString();
+    updateFileContent(previewFile.id, content, fileName);
     setIsEditing(false);
+    setIsEditMode(false);
   };
 
   const handleDownload = () => {
@@ -83,9 +86,21 @@ export const FilePreviewModal: React.FC = () => {
                <File className="w-4 h-4 text-[#16A085]" />}
             </div>
             <div className="truncate">
-              <h3 className="font-bold text-sm text-[var(--text-main)] truncate">
-                {previewFile.name}.{previewFile.extension}
-              </h3>
+              {isEditing ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={fileName}
+                    onChange={e => setFileName(e.target.value)}
+                    className="font-bold text-sm bg-white/10 border border-[#16A085]/50 rounded-lg px-2 py-0.5 text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-[#16A085]"
+                  />
+                  <span className="text-xs text-[var(--text-muted)] font-mono">.{previewFile.extension}</span>
+                </div>
+              ) : (
+                <h3 className="font-bold text-sm text-[var(--text-main)] truncate">
+                  {fileName || previewFile.name}.{previewFile.extension}
+                </h3>
+              )}
               <div className="flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
                 <span className={`px-1.5 py-0.2 rounded border font-semibold uppercase ${getFileBadgeColor()}`}>
                   {previewFile.category}

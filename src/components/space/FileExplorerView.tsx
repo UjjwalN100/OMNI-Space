@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useSpace } from '../../context/SpaceContext';
+import { FileActionMenu } from './FileActionMenu';
 import { 
   Folder, 
   FileText, 
@@ -194,52 +195,10 @@ export const FileExplorerView: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Folder 3-dot menu trigger */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveMenuId(activeMenuId === folder.id ? null : folder.id);
-                        }}
-                        className="absolute top-2 right-2 p-1 rounded-md text-slate-400 hover:text-[var(--text-main)] hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <MoreVertical className="w-3.5 h-3.5" />
-                      </button>
-
-                      {/* Folder Context Menu Dropdown */}
-                      {activeMenuId === folder.id && (
-                        <>
-                          <div className="fixed inset-0 z-40" onClick={() => setActiveMenuId(null)} />
-                          <div className="absolute right-2 top-8 w-48 glass-panel rounded-xl shadow-2xl p-1.5 z-50 border border-[var(--border-line)] bg-[var(--surface-bg)] text-[var(--text-main)] text-xs">
-                            <button
-                              onClick={() => {
-                                isPinned ? unpinFromQuickAccess(folder.id) : pinToQuickAccess(folder.id, 'folder');
-                                setActiveMenuId(null);
-                              }}
-                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-left"
-                            >
-                              <Pin className="w-3.5 h-3.5 text-[#16A085]" />
-                              <span>{isPinned ? 'Remove from Quick Access' : 'Add to Quick Access'}</span>
-                            </button>
-                            <button
-                              onClick={() => handleRename(folder.id, folder.name, true)}
-                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-left"
-                            >
-                              <Edit3 className="w-3.5 h-3.5 text-slate-400" />
-                              <span>Rename</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                trashItems([folder.id], true);
-                                setActiveMenuId(null);
-                              }}
-                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-rose-500/10 text-rose-400 text-left"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Move to Trash</span>
-                            </button>
-                          </div>
-                        </>
-                      )}
+                      {/* Folder 3-dot action menu */}
+                      <div className="absolute top-2 right-2 z-10">
+                        <FileActionMenu item={folder} isFolder={true} />
+                      </div>
                     </div>
                   );
                 })}
@@ -310,80 +269,10 @@ export const FileExplorerView: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* File 3-dot menu trigger */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveMenuId(activeMenuId === file.id ? null : file.id);
-                          }}
-                          className="absolute top-3 right-3 p-1 rounded-md text-slate-400 hover:text-[var(--text-main)] hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          <MoreVertical className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* File Context Menu Dropdown */}
-                        {activeMenuId === file.id && (
-                          <>
-                            <div className="fixed inset-0 z-40" onClick={() => setActiveMenuId(null)} />
-                            <div className="absolute right-3 top-9 w-52 glass-panel rounded-xl shadow-2xl p-1.5 z-50 border border-[var(--border-line)] bg-[var(--surface-bg)] text-[var(--text-main)] text-xs">
-                              <button
-                                onClick={() => {
-                                  setPreviewFile(file);
-                                  setActiveMenuId(null);
-                                }}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-left"
-                              >
-                                <Eye className="w-3.5 h-3.5 text-[#16A085]" />
-                                <span>Open / Preview</span>
-                              </button>
-                              <button
-                                onClick={() => {
-                                  isPinned ? unpinFromQuickAccess(file.id) : pinToQuickAccess(file.id, 'file');
-                                  setActiveMenuId(null);
-                                }}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-left"
-                              >
-                                <Pin className="w-3.5 h-3.5 text-[#16A085]" />
-                                <span>{isPinned ? 'Remove from Quick Access' : 'Add to Quick Access'}</span>
-                              </button>
-                              <button
-                                onClick={() => handleDownload(file)}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-left"
-                              >
-                                <Download className="w-3.5 h-3.5 text-slate-400" />
-                                <span>Download</span>
-                              </button>
-                              <button
-                                onClick={() => handleRename(file.id, file.name, false)}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-left"
-                              >
-                                <Edit3 className="w-3.5 h-3.5 text-slate-400" />
-                                <span>Rename</span>
-                              </button>
-                              <button
-                                onClick={() => {
-                                  makeCopy(file.id);
-                                  setActiveMenuId(null);
-                                }}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-left"
-                              >
-                                <Copy className="w-3.5 h-3.5 text-slate-400" />
-                                <span>Make a Copy</span>
-                              </button>
-                              <div className="my-1 border-t border-[var(--border-line)]" />
-                              <button
-                                onClick={() => {
-                                  trashItems([file.id], false);
-                                  setActiveMenuId(null);
-                                }}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-rose-500/10 text-rose-400 text-left"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                <span>Move to Trash</span>
-                              </button>
-                            </div>
-                          </>
-                        )}
+                        {/* File 3-dot action menu */}
+                        <div className="absolute top-3 right-3 z-10">
+                          <FileActionMenu item={file} isFolder={false} />
+                        </div>
                       </div>
                     );
                   })}
@@ -443,15 +332,7 @@ export const FileExplorerView: React.FC = () => {
                               {formatDate(file.updatedAt)}
                             </td>
                             <td className="py-2.5 px-3 text-right">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveMenuId(activeMenuId === file.id ? null : file.id);
-                                }}
-                                className="p-1 text-slate-400 hover:text-[var(--text-main)] rounded-lg hover:bg-white/10"
-                              >
-                                <MoreVertical className="w-3.5 h-3.5" />
-                              </button>
+                              <FileActionMenu item={file} isFolder={false} align="right" />
                             </td>
                           </tr>
                         );

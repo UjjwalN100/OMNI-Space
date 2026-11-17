@@ -50,7 +50,7 @@ export interface StorageQuota {
   otherBytes: number;
 }
 
-export type ActivityAction = 'uploaded' | 'created' | 'renamed' | 'moved' | 'copied' | 'trashed' | 'restored' | 'deleted';
+export type ActivityAction = 'uploaded' | 'created' | 'renamed' | 'moved' | 'copied' | 'trashed' | 'restored' | 'deleted' | 'edited';
 
 export interface ActivityItem {
   id: string;

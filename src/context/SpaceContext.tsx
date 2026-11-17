@@ -47,6 +47,10 @@ interface SpaceContextType {
   
   previewFile: FileItem | null;
   setPreviewFile: (file: FileItem | null) => void;
+  isEditMode: boolean;
+  setIsEditMode: (editing: boolean) => void;
+  openFileInEditMode: (file: FileItem) => void;
+  updateFileContent: (fileId: string, content: string, newName?: string) => void;
   
   // Handlers
   createFolder: (name: string, parentId?: string | null) => void;
@@ -187,6 +191,12 @@ export const SpaceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+  const [isEditMode, setIsEditMode] = useState<boolean>(false);
+
+  const openFileInEditMode = useCallback((file: FileItem) => {
+    setPreviewFile(file);
+    setIsEditMode(true);
+  }, []);
 
   // Persistence for files and folders
   const [folders, setFolders] = useState<FolderItem[]>(() => {
@@ -601,6 +611,50 @@ export const SpaceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [user, addActivity]);
 
+  const updateFileContent = useCallback((fileId: string, content: string, newName?: string) => {
+    const now = new Date().toISOString();
+    setFiles(prev => prev.map(f => {
+      if (f.id === fileId) {
+        return {
+          ...f,
+          content,
+          name: newName ? newName.trim() : f.name,
+          updatedAt: now,
+          lastAccessedAt: now
+        };
+      }
+      return f;
+    }));
+
+    if (previewFile && previewFile.id === fileId) {
+      setPreviewFile(prev => prev ? {
+        ...prev,
+        content,
+        name: newName ? newName.trim() : prev.name,
+        updatedAt: now
+      } : null);
+    }
+
+    addActivity('edited', newName || 'Document', 'file', 'File content saved');
+
+    if (user) {
+      const updatePayload: Record<string, any> = {
+        content,
+        updated_at: now
+      };
+      if (newName && newName.trim()) {
+        updatePayload.name = newName.trim();
+      }
+      supabase.from('files')
+        .update(updatePayload)
+        .eq('id', fileId)
+        .eq('user_id', user.id)
+        .then(({ error }) => {
+          if (error) console.error('Error saving file update:', error);
+        });
+    }
+  }, [user, previewFile, addActivity]);
+
   const makeCopy = useCallback((fileId: string) => {
     const original = files.find(f => f.id === fileId);
     if (!original) return;
@@ -851,6 +905,10 @@ export const SpaceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         activities,
         previewFile,
         setPreviewFile,
+        isEditMode,
+        setIsEditMode,
+        openFileInEditMode,
+        updateFileContent,
         createFolder,
         createDocument,
         uploadFiles,

@@ -14,9 +14,10 @@ import {
   PanelLeftOpen, 
   HardDrive,
   Layers,
-  Sparkles
+  Sparkles,
+  Pin
 } from 'lucide-react';
-import { SpaceSection } from '../../types/space';
+import { SpaceSection, FolderItem, FileItem } from '../../types/space';
 
 export const SpaceSidebar: React.FC = () => {
   const { 
@@ -25,8 +26,25 @@ export const SpaceSidebar: React.FC = () => {
     isSidebarCollapsed, 
     setIsSidebarCollapsed,
     quota,
-    files
+    files,
+    folders,
+    quickAccess,
+    setCurrentFolderId,
+    setPreviewFile
   } = useSpace();
+
+  // Map Quick Access pinned items
+  const pinnedList = quickAccess
+    .map(qa => {
+      if (qa.itemType === 'folder') {
+        const folder = folders.find(f => f.id === qa.itemId && !f.isTrashed);
+        return folder ? { ...qa, data: folder, type: 'folder' as const } : null;
+      } else {
+        const file = files.find(f => f.id === qa.itemId && !f.isTrashed);
+        return file ? { ...qa, data: file, type: 'file' as const } : null;
+      }
+    })
+    .filter(Boolean) as { id: string; itemType: 'file' | 'folder'; itemId: string; sortOrder: number; data: FolderItem | FileItem; type: 'file' | 'folder' }[];
 
   const navItems: { id: SpaceSection; label: string; icon: any; color?: string; count?: number }[] = [
     { id: 'home', label: 'Home', icon: Home },
@@ -113,6 +131,43 @@ export const SpaceSidebar: React.FC = () => {
             </button>
           );
         })}
+
+        {/* Quick Access Pinned Section */}
+        {!isSidebarCollapsed && pinnedList.length > 0 && (
+          <div className="pt-3 pb-1 border-t border-[var(--border-line)] mt-2">
+            <div className="flex items-center justify-between px-3 mb-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              <div className="flex items-center gap-1.5">
+                <Pin className="w-3 h-3 text-[#16A085]" />
+                <span>Quick Access</span>
+              </div>
+              <span className="text-[9px] font-mono">{pinnedList.length}</span>
+            </div>
+            <div className="space-y-0.5 max-h-36 overflow-y-auto">
+              {pinnedList.map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    if (item.type === 'folder') {
+                      setCurrentFolderId(item.data.id);
+                      setCurrentSection('my-files');
+                    } else {
+                      setPreviewFile(item.data as FileItem);
+                    }
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-white/5 transition text-left truncate group"
+                  title={item.data.name}
+                >
+                  {item.type === 'folder' ? (
+                    <Folder className="w-3.5 h-3.5 text-[#16A085] shrink-0" />
+                  ) : (
+                    <FileText className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  )}
+                  <span className="truncate group-hover:text-[#16A085] transition-colors">{item.data.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* Storage Gauge & Bottom Settings */}

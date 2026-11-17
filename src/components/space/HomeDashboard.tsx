@@ -1,6 +1,7 @@
 import React from 'react';
 import { useSpace } from '../../context/SpaceContext';
 import { useAuth } from '../../context/AuthContext';
+import { FileActionMenu } from './FileActionMenu';
 import { 
   FileText, 
   FileSpreadsheet, 
@@ -222,12 +223,12 @@ export const HomeDashboard: React.FC = () => {
                 <div
                   key={file.id}
                   onClick={() => setPreviewFile(file)}
-                  className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.07] border border-[var(--border-line)] hover:border-[#16A085]/30 cursor-pointer transition-all hover:scale-[1.01] group"
+                  className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.07] border border-[var(--border-line)] hover:border-[#16A085]/30 cursor-pointer transition-all hover:scale-[1.01] group relative"
                 >
                   <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center shrink-0">
                     {getFileIcon(file.category)}
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 pr-8">
                     <div className="text-xs font-bold text-[var(--text-main)] truncate group-hover:text-[#16A085] transition-colors">
                       {file.name}
                       <span className="text-[10px] text-[var(--text-muted)] font-mono ml-1">.{file.extension}</span>
@@ -237,6 +238,11 @@ export const HomeDashboard: React.FC = () => {
                       <span>•</span>
                       <span>Edited {formatTimeAgo(file.lastAccessedAt || file.updatedAt)}</span>
                     </div>
+                  </div>
+
+                  {/* Three-dot Action Menu (Edit, Pin to Quick Access, Move to Trash) */}
+                  <div className="absolute right-2 top-2.5 z-10">
+                    <FileActionMenu item={file} isFolder={false} align="right" />
                   </div>
                 </div>
               ))}
@@ -324,12 +330,12 @@ export const HomeDashboard: React.FC = () => {
                       </span>
                     </div>
 
-                    {/* Reorder and Unpin buttons */}
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* Reorder and Action buttons */}
+                    <div className="flex items-center gap-0.5">
                       {idx > 0 && (
                         <button
                           onClick={() => handleMoveQuickAccess(idx, 'up')}
-                          className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10"
+                          className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Move Up"
                         >
                           <ArrowUp className="w-3 h-3" />
@@ -338,19 +344,18 @@ export const HomeDashboard: React.FC = () => {
                       {idx < quickAccessList.length - 1 && (
                         <button
                           onClick={() => handleMoveQuickAccess(idx, 'down')}
-                          className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10"
+                          className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Move Down"
                         >
                           <ArrowDown className="w-3 h-3" />
                         </button>
                       )}
-                      <button
-                        onClick={() => unpinFromQuickAccess(item.itemId)}
-                        className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-white/10"
-                        title="Unpin from Quick Access"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
+                      <FileActionMenu 
+                        item={item.data} 
+                        isFolder={item.type === 'folder'} 
+                        align="right" 
+                        triggerClassName="p-1"
+                      />
                     </div>
                   </div>
                 ))}
