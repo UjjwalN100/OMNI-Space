@@ -855,7 +855,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
 
       {/* 3. WYSIWYG DOCUMENT CANVAS (Google Docs Style Paper Container) */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-8 flex justify-center items-start bg-black/[0.04] dark:bg-black/20">
-        <div className="w-full max-w-4xl min-h-[850px] h-fit p-6 sm:p-12 rounded-2xl bg-[var(--surface-bg)] border border-[var(--border-line)] shadow-2xl flex flex-col mb-20 overflow-hidden">
+        <div className="w-full max-w-4xl min-h-[900px] p-8 sm:p-14 rounded-2xl bg-[var(--surface-bg)] border border-[var(--border-line)] shadow-2xl mb-32">
           {/* True ContentEditable Canvas */}
           <div
             ref={editorRef}
@@ -865,7 +865,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
             onKeyUp={updateActiveStyles}
             onMouseUp={updateActiveStyles}
             onSelect={updateActiveStyles}
-            className="omni-doc-canvas flex-1 w-full text-[var(--text-main)] font-sans text-sm sm:text-base leading-relaxed focus:outline-none"
+            className="omni-doc-canvas w-full min-h-[750px] text-[var(--text-main)] font-sans text-sm sm:text-base leading-relaxed focus:outline-none"
             spellCheck="true"
           />
         </div>

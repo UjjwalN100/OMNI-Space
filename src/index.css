@@ -126,27 +126,26 @@ body {
 
 .omni-doc-canvas table {
   width: 100%;
-  min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   margin: 1.5rem 0;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 0.75rem;
   overflow: hidden;
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.25);
-  background: rgba(255, 255, 255, 0.02);
-  table-layout: auto;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
+  background: rgba(255, 255, 255, 0.015);
+  table-layout: fixed;
 }
 
 .omni-doc-canvas th,
 .omni-doc-canvas td {
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
   padding: 0.75rem 1rem;
   text-align: left;
-  min-width: 90px;
-  vertical-align: top;
-  position: relative;
+  vertical-align: middle;
+  height: 42px;
+  min-height: 42px;
   word-break: break-word;
 }
 
@@ -155,31 +154,33 @@ body {
   border-right: none;
 }
 
-.omni-doc-canvas tbody tr:last-child td {
+.omni-doc-canvas tbody tr:last-child td,
+.omni-doc-canvas tr:last-child td {
   border-bottom: none;
 }
 
-.omni-doc-canvas tbody tr:nth-child(even) td {
+.omni-doc-canvas tbody tr:nth-child(even) td,
+.omni-doc-canvas tr:nth-child(even) td {
   background-color: rgba(255, 255, 255, 0.02);
 }
 
-.omni-doc-canvas tbody tr:hover td {
-  background-color: rgba(22, 160, 133, 0.05);
+.omni-doc-canvas tbody tr:hover td,
+.omni-doc-canvas tr:hover td {
+  background-color: rgba(22, 160, 133, 0.06);
 }
 
 .omni-doc-canvas th {
-  background: rgba(22, 160, 133, 0.15);
+  background: rgba(22, 160, 133, 0.18);
   font-weight: 700;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
   color: #2dd4bf;
-  border-bottom: 2px solid rgba(22, 160, 133, 0.35);
+  border-bottom: 2px solid #16A085;
 }
 
 .omni-doc-canvas td:focus,
 .omni-doc-canvas th:focus {
-  background-color: rgba(22, 160, 133, 0.12) !important;
+  background-color: rgba(22, 160, 133, 0.15) !important;
   outline: 2px solid #16A085;
   outline-offset: -2px;
 }
