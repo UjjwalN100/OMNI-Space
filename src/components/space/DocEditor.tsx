@@ -28,8 +28,7 @@ import {
   AlignRight,
   Pilcrow,
   Plus,
-  Trash2,
-  ChevronDown
+  Trash2
 } from 'lucide-react';
 
 interface DocEditorProps {
@@ -57,7 +56,7 @@ function convertMarkdownToHtml(raw: string): string {
     .replace(/\*\*\*(.*?)\*\*\*/gim, '<b><i>$1</i></b>')
     .replace(/\*\*(.*?)\*\*/gim, '<b>$1</b>')
     .replace(/\*(.*?)\*/gim, '<i>$1</i>')
-    .replace(/~~(.*?)~~/gim, '<strike>$1</strike>')
+    .replace(/~~(.*?)~~/gim, '<del>$1</del>')
     .replace(/^\> (.*$)/gim, '<blockquote>$1</blockquote>')
     .replace(/^---$/gim, '<hr>');
 
@@ -66,28 +65,27 @@ function convertMarkdownToHtml(raw: string): string {
   const wrapped = lines.map(line => {
     const trimmed = line.trim();
     if (!trimmed) return '<p><br></p>';
-    if (trimmed.startsWith('<h1') || trimmed.startsWith('<h2') || trimmed.startsWith('<h3') || trimmed.startsWith('<blockquote') || trimmed.startsWith('<hr')) {
+    if (trimmed.startsWith('<h') || trimmed.startsWith('<blockquote') || trimmed.startsWith('<hr') || trimmed.startsWith('<table')) {
       return trimmed;
     }
-    return `<p>${line}</p>`;
+    return `<p>${trimmed}</p>`;
   });
 
   return wrapped.join('');
 }
 
-export const DocEditor: React.FC<DocEditorProps> = ({
-  file,
+export const DocEditor: React.FC<DocEditorProps> = ({ 
+  file, 
+  onClose,
   isFullscreen = false,
-  onToggleFullscreen,
-  onClose
+  onToggleFullscreen
 }) => {
-  const { updateFileContent, downloadFile } = useSpace();
-
+  const { updateFileContent } = useSpace();
   const [title, setTitle] = useState(file.name);
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'idle'>('saved');
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
   const [wordCount, setWordCount] = useState(0);
 
-  // Active toolbar formatting states (bold, italic, underline, etc.)
+  // Active formatting state for highlighting toolbar buttons
   const [activeStyles, setActiveStyles] = useState({
     bold: false,
     italic: false,
@@ -101,13 +99,16 @@ export const DocEditor: React.FC<DocEditorProps> = ({
     blockquote: false
   });
 
-  // Table status and dropdown popover state
+  // Table status and tracking
   const [isInsideTable, setIsInsideTable] = useState(false);
-  const [isTableDropdownOpen, setIsTableDropdownOpen] = useState(false);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const tableMenuRef = useRef<HTMLDivElement>(null);
+  const lastTableRef = useRef<{
+    cell: HTMLTableCellElement | null;
+    row: HTMLTableRowElement | null;
+    table: HTMLTableElement | null;
+  }>({ cell: null, row: null, table: null });
 
   // Compute word count from inner text
   const updateMetrics = (text: string) => {
@@ -115,18 +116,6 @@ export const DocEditor: React.FC<DocEditorProps> = ({
     const count = cleanText.length > 0 ? cleanText.split(/\s+/).length : 0;
     setWordCount(count);
   };
-
-  // Close table dropdown when clicking outside
-  useEffect(() => {
-    if (!isTableDropdownOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (tableMenuRef.current && !tableMenuRef.current.contains(e.target as Node)) {
-        setIsTableDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isTableDropdownOpen]);
 
   // Initialize editor content once on load
   useEffect(() => {
@@ -136,6 +125,8 @@ export const DocEditor: React.FC<DocEditorProps> = ({
       const initialHtml = convertMarkdownToHtml(file.content || '');
       editorRef.current.innerHTML = initialHtml;
       updateMetrics(editorRef.current.innerText || '');
+      const hasTable = !!editorRef.current.querySelector('table');
+      setIsInsideTable(hasTable);
     }
   }, [file.id]);
 
@@ -146,15 +137,23 @@ export const DocEditor: React.FC<DocEditorProps> = ({
       clearTimeout(saveTimeoutRef.current);
     }
 
-    saveTimeoutRef.current = setTimeout(() => {
-      const currentHtml = editorRef.current ? editorRef.current.innerHTML : '';
-      updateFileContent(file.id, currentHtml, newTitle);
-      setSaveStatus('saved');
+    saveTimeoutRef.current = setTimeout(async () => {
+      if (editorRef.current) {
+        const htmlContent = editorRef.current.innerHTML;
+        try {
+          await updateFileContent(file.id, htmlContent, newTitle);
+          setSaveStatus('saved');
+        } catch (err) {
+          console.error('Failed to auto-save document:', err);
+          setSaveStatus('unsaved');
+        }
+      }
     }, 800);
   }, [file.id, updateFileContent]);
 
-  // Handle typing inside contentEditable
+  // Handle editor canvas input
   const handleInput = () => {
+    setSaveStatus('unsaved');
     if (editorRef.current) {
       updateMetrics(editorRef.current.innerText || '');
     }
@@ -162,10 +161,11 @@ export const DocEditor: React.FC<DocEditorProps> = ({
     updateActiveStyles();
   };
 
-  // Handle title edit
+  // Handle document title change
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextTitle = e.target.value;
     setTitle(nextTitle);
+    setSaveStatus('unsaved');
     triggerAutoSave(nextTitle);
   };
 
@@ -186,6 +186,10 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         const table = cell.closest('table') as HTMLTableElement | null;
         return { cell, row, table };
       }
+      if (node.nodeName === 'TABLE') {
+        const table = node as HTMLTableElement;
+        return { cell: null, row: null, table };
+      }
       node = node.parentNode;
     }
     return { cell: null, row: null, table: null };
@@ -204,9 +208,15 @@ export const DocEditor: React.FC<DocEditorProps> = ({
       // Check current block format (h1, h2, h3, etc.)
       const blockValue = (document.queryCommandValue('formatBlock') || '').toLowerCase();
 
-      // Check if inside a table
-      const { table } = getActiveCellAndTable();
-      setIsInsideTable(!!table);
+      // Check if cursor is inside a table, or if document contains any table
+      const { cell, row, table } = getActiveCellAndTable();
+      if (table) {
+        lastTableRef.current = { cell, row, table };
+        setIsInsideTable(true);
+      } else {
+        const hasTableInDoc = !!editorRef.current?.querySelector('table');
+        setIsInsideTable(hasTableInDoc);
+      }
 
       setActiveStyles({
         bold: isBold,
@@ -225,6 +235,11 @@ export const DocEditor: React.FC<DocEditorProps> = ({
     }
   };
 
+  // Prevent mousedown from blurring the editor canvas
+  const preventBlur = (e: React.MouseEvent) => {
+    e.preventDefault();
+  };
+
   // Execute rich-text format command
   const executeCommand = (command: string, value: string | undefined = undefined) => {
     if (editorRef.current) {
@@ -238,43 +253,100 @@ export const DocEditor: React.FC<DocEditorProps> = ({
     updateActiveStyles();
   };
 
-  // Insert a fresh HTML Table (configurable rows and cols)
+  // Insert a fresh HTML Table directly via DOM (3 rows x 3 columns standard)
   const insertTable = (rows: number = 3, cols: number = 3) => {
-    let headerCells = '';
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+
+    // Create table element directly via DOM
+    const table = document.createElement('table');
+    table.className = 'omni-doc-table';
+
+    const thead = document.createElement('thead');
+    const headerTr = document.createElement('tr');
     for (let c = 1; c <= cols; c++) {
-      headerCells += `<th>Column ${c}</th>`;
+      const th = document.createElement('th');
+      th.textContent = `Header ${c}`;
+      headerTr.appendChild(th);
     }
-    let bodyRows = '';
+    thead.appendChild(headerTr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
     for (let r = 1; r < rows; r++) {
-      let cells = '';
+      const tr = document.createElement('tr');
       for (let c = 1; c <= cols; c++) {
-        cells += `<td>Cell ${r},${c}</td>`;
+        const td = document.createElement('td');
+        td.innerHTML = '<br>';
+        tr.appendChild(td);
       }
-      bodyRows += `<tr>${cells}</tr>`;
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+
+    const pAfter = document.createElement('p');
+    pAfter.innerHTML = '<br>';
+
+    // Try to insert at selection, otherwise append
+    const selection = window.getSelection();
+    let inserted = false;
+    if (selection && selection.rangeCount > 0 && editorRef.current.contains(selection.anchorNode)) {
+      try {
+        const range = selection.getRangeAt(0);
+        let node: Node | null = range.startContainer;
+        while (node && node.parentNode !== editorRef.current) {
+          node = node.parentNode;
+        }
+
+        if (node && editorRef.current.contains(node)) {
+          (node as ChildNode).after(table);
+          table.after(pAfter);
+          inserted = true;
+        } else {
+          range.insertNode(table);
+          table.after(pAfter);
+          inserted = true;
+        }
+      } catch {
+        inserted = false;
+      }
     }
 
-    const tableHtml = `
-      <table class="omni-doc-table">
-        <thead>
-          <tr>${headerCells}</tr>
-        </thead>
-        <tbody>
-          ${bodyRows}
-        </tbody>
-      </table>
-      <p><br></p>
-    `;
-    executeCommand('insertHTML', tableHtml);
-    setIsTableDropdownOpen(false);
+    if (!inserted) {
+      editorRef.current.appendChild(table);
+      editorRef.current.appendChild(pAfter);
+    }
+
+    // Place cursor in first header cell
+    const firstCell = table.querySelector('th, td') as HTMLTableCellElement | null;
+    if (firstCell) {
+      const range = document.createRange();
+      range.selectNodeContents(firstCell);
+      range.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+
+    lastTableRef.current = { cell: firstCell, row: table.rows[0] || null, table };
+    setIsInsideTable(true);
+    updateMetrics(editorRef.current.innerText || '');
+    handleInput();
+    updateActiveStyles();
   };
 
   // TABLE MANIPULATION: Add Row
   const handleAddRow = (below: boolean = true) => {
-    const { row, table } = getActiveCellAndTable();
+    let { row, table } = getActiveCellAndTable();
+    if (!table) {
+      table = lastTableRef.current.table || editorRef.current?.querySelector('table') || null;
+    }
     if (!table) return;
 
-    const targetRow = row || (table.rows.length > 0 ? table.rows[table.rows.length - 1] : null);
-    const colCount = targetRow ? targetRow.cells.length : 3;
+    if (!row) {
+      row = lastTableRef.current.row || (table.rows.length > 0 ? table.rows[table.rows.length - 1] : null);
+    }
+
+    const colCount = row ? row.cells.length : (table.rows[0]?.cells.length || 3);
 
     const newRow = document.createElement('tr');
     for (let i = 0; i < colCount; i++) {
@@ -283,50 +355,70 @@ export const DocEditor: React.FC<DocEditorProps> = ({
       newRow.appendChild(td);
     }
 
-    if (targetRow && below) {
-      targetRow.after(newRow);
-    } else if (targetRow && !below) {
-      targetRow.before(newRow);
+    if (row && below) {
+      row.after(newRow);
+    } else if (row && !below) {
+      row.before(newRow);
     } else {
-      table.appendChild(newRow);
+      const tbody = table.querySelector('tbody') || table;
+      tbody.appendChild(newRow);
     }
 
-    // Place cursor into the first cell of the newly added row
-    setTimeout(() => {
-      const firstCell = newRow.cells[0];
-      if (firstCell) {
-        const range = document.createRange();
-        const sel = window.getSelection();
-        range.selectNodeContents(firstCell);
-        range.collapse(true);
-        sel?.removeAllRanges();
-        sel?.addRange(range);
-      }
-    }, 10);
+    // Place cursor in first cell of new row
+    const firstCell = newRow.cells[0];
+    if (firstCell) {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(firstCell);
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      lastTableRef.current = { cell: firstCell, row: newRow, table };
+    }
 
+    setIsInsideTable(true);
     handleInput();
-    setIsTableDropdownOpen(false);
+    updateActiveStyles();
   };
 
   // TABLE MANIPULATION: Delete Current Row
   const handleDeleteRow = () => {
-    const { row, table } = getActiveCellAndTable();
-    if (!table || !row) return;
+    let { row, table } = getActiveCellAndTable();
+    if (!table) {
+      table = lastTableRef.current.table || editorRef.current?.querySelector('table') || null;
+    }
+    if (!table) return;
+
+    if (!row) {
+      row = lastTableRef.current.row || (table.rows.length > 0 ? table.rows[table.rows.length - 1] : null);
+    }
+    if (!row) return;
 
     if (table.rows.length <= 1) {
       table.remove();
       setIsInsideTable(false);
+      lastTableRef.current = { cell: null, row: null, table: null };
     } else {
+      const fallbackRow = (row.nextElementSibling || row.previousElementSibling || table.rows[0]) as HTMLTableRowElement | null;
       row.remove();
+      const fallbackCell = fallbackRow?.cells[0] || null;
+      lastTableRef.current = { cell: fallbackCell, row: fallbackRow, table };
     }
     handleInput();
-    setIsTableDropdownOpen(false);
+    updateActiveStyles();
   };
 
   // TABLE MANIPULATION: Add Column
   const handleAddColumn = (after: boolean = true) => {
-    const { cell, table } = getActiveCellAndTable();
+    let { cell, table } = getActiveCellAndTable();
+    if (!table) {
+      table = lastTableRef.current.table || editorRef.current?.querySelector('table') || null;
+    }
     if (!table) return;
+
+    if (!cell) {
+      cell = lastTableRef.current.cell || (table.rows[0]?.cells.length ? table.rows[0].cells[table.rows[0].cells.length - 1] : null);
+    }
 
     const colIndex = cell ? cell.cellIndex : (table.rows[0]?.cells.length || 1) - 1;
 
@@ -347,14 +439,22 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         r.appendChild(newCell);
       }
     }
+
     handleInput();
-    setIsTableDropdownOpen(false);
+    updateActiveStyles();
   };
 
   // TABLE MANIPULATION: Delete Current Column
   const handleDeleteColumn = () => {
-    const { cell, table } = getActiveCellAndTable();
+    let { cell, table } = getActiveCellAndTable();
+    if (!table) {
+      table = lastTableRef.current.table || editorRef.current?.querySelector('table') || null;
+    }
     if (!table) return;
+
+    if (!cell) {
+      cell = lastTableRef.current.cell || (table.rows[0]?.cells.length ? table.rows[0].cells[table.rows[0].cells.length - 1] : null);
+    }
 
     const colIndex = cell ? cell.cellIndex : 0;
     const numCols = table.rows[0]?.cells.length || 0;
@@ -362,6 +462,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
     if (numCols <= 1) {
       table.remove();
       setIsInsideTable(false);
+      lastTableRef.current = { cell: null, row: null, table: null };
     } else {
       for (let i = 0; i < table.rows.length; i++) {
         const r = table.rows[i];
@@ -370,19 +471,24 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         }
       }
     }
+
     handleInput();
-    setIsTableDropdownOpen(false);
+    updateActiveStyles();
   };
 
   // TABLE MANIPULATION: Delete Entire Table
   const handleDeleteTable = () => {
-    const { table } = getActiveCellAndTable();
+    let { table } = getActiveCellAndTable();
+    if (!table) {
+      table = lastTableRef.current.table || editorRef.current?.querySelector('table') || null;
+    }
     if (table) {
       table.remove();
       setIsInsideTable(false);
+      lastTableRef.current = { cell: null, row: null, table: null };
       handleInput();
+      updateActiveStyles();
     }
-    setIsTableDropdownOpen(false);
   };
 
   // Print document
@@ -390,71 +496,85 @@ export const DocEditor: React.FC<DocEditorProps> = ({
     window.print();
   };
 
-  const readTimeMinutes = Math.max(1, Math.ceil(wordCount / 200));
+  // Export document as plain text or styled file
+  const handleDownload = () => {
+    if (!editorRef.current) return;
+    const content = editorRef.current.innerText;
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${title.replace(/\.[^/.]+$/, '')}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
-    <div className={`flex flex-col h-full bg-[var(--surface-bg)] text-[var(--text-main)] select-text ${
-      isFullscreen ? 'fixed inset-0 z-50' : 'relative'
-    }`}>
-      {/* 1. TOP DOCUMENT CONTROL BAR */}
-      <div className="h-14 border-b border-[var(--border-line)] px-4 sm:px-6 flex items-center justify-between gap-3 shrink-0 bg-white/[0.02]">
-        {/* Document Title & File Extension */}
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0 shadow-xs">
-            <FileText className="w-4 h-4" />
+    <div className="flex flex-col h-full bg-[var(--bg-main)] text-[var(--text-main)] overflow-hidden">
+      {/* 1. TOP UTILITY HEADER */}
+      <div className="border-b border-[var(--border-line)] px-4 py-2.5 flex items-center justify-between gap-3 bg-[var(--surface-bg)] shrink-0">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 shrink-0">
+            <FileText className="w-5 h-5" />
           </div>
-          <div className="flex items-center gap-1.5 min-w-0">
+
+          <div className="flex items-center gap-2 min-w-0 max-w-md">
             <input
               type="text"
               value={title}
               onChange={handleTitleChange}
-              placeholder="Untitled Document"
-              className="font-bold text-sm sm:text-base text-[var(--text-main)] bg-transparent hover:bg-white/5 focus:bg-white/10 rounded-lg px-2 py-1 border border-transparent focus:border-[#16A085]/50 focus:outline-none transition-all truncate"
+              placeholder="Untitled Document..."
+              className="bg-transparent text-base sm:text-lg font-bold text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-[#16A085] rounded px-1.5 py-0.5 truncate w-full"
             />
-            <span className="text-xs font-mono text-slate-500 shrink-0">.{file.extension}</span>
+            <span className="text-xs text-slate-400 font-mono shrink-0">.docx</span>
           </div>
 
-          {/* Real-time Save Status Pill */}
-          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.03] border border-[var(--border-line)] text-[11px]">
-            {saveStatus === 'saving' ? (
+          {/* Auto-save Status Pill */}
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium shrink-0 bg-white/5 border border-white/10">
+            {saveStatus === 'saving' && (
               <>
-                <Loader2 className="w-3 h-3 text-amber-400 animate-spin" />
-                <span className="text-amber-400 font-medium">Saving...</span>
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                <span className="text-amber-400 text-[11px]">Saving...</span>
               </>
-            ) : (
+            )}
+            {saveStatus === 'saved' && (
               <>
-                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                <span className="text-slate-400">Saved to Cloud</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-emerald-400 text-[11px]">Saved to Cloud</span>
+              </>
+            )}
+            {saveStatus === 'unsaved' && (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span className="text-slate-400 text-[11px]">Unsaved</span>
               </>
             )}
           </div>
         </div>
 
-        {/* Right Action Controls */}
-        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-          {/* Word Count Badge */}
-          <div className="hidden lg:flex items-center gap-2 text-[11px] text-slate-400 px-2 py-1 rounded-lg bg-white/[0.02] font-mono">
+        {/* Right side stats and actions */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div className="hidden md:flex items-center gap-2 text-xs text-slate-400 mr-2 border-r border-[var(--border-line)] pr-3">
             <span>{wordCount} words</span>
             <span>•</span>
-            <span>{readTimeMinutes} min read</span>
+            <span>{Math.max(1, Math.ceil(wordCount / 200))} min read</span>
           </div>
 
-          {/* Print / Export button */}
+          {/* Export / Print */}
+          <button
+            onClick={handleDownload}
+            className="p-2 text-slate-400 hover:text-[var(--text-main)] rounded-xl hover:bg-white/10 transition"
+            title="Download as Text"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+
           <button
             onClick={handlePrint}
             className="p-2 text-slate-400 hover:text-[var(--text-main)] rounded-xl hover:bg-white/10 transition"
-            title="Print or Save as PDF"
+            title="Print Document"
           >
             <Printer className="w-4 h-4" />
-          </button>
-
-          {/* Download button */}
-          <button
-            onClick={() => downloadFile(file)}
-            className="p-2 text-slate-400 hover:text-[var(--text-main)] rounded-xl hover:bg-white/10 transition"
-            title="Download Document"
-          >
-            <Download className="w-4 h-4" />
           </button>
 
           {/* Fullscreen Toggle */}
@@ -482,9 +602,10 @@ export const DocEditor: React.FC<DocEditorProps> = ({
       </div>
 
       {/* 2. WYSIWYG FORMATTING TOOLBAR RIBBON */}
-      <div className="border-b border-[var(--border-line)] px-4 py-2 bg-white/[0.02] flex items-center gap-1 flex-wrap overflow-x-auto text-xs shrink-0 select-none">
+      <div className="border-b border-[var(--border-line)] px-4 py-2 bg-white/[0.02] flex items-center gap-1 flex-wrap text-xs shrink-0 select-none">
         {/* Headings */}
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('formatBlock', activeStyles.h1 ? '<p>' : '<h1>')}
           className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition font-bold ${
             activeStyles.h1 ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -496,6 +617,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('formatBlock', activeStyles.h2 ? '<p>' : '<h2>')}
           className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition font-bold ${
             activeStyles.h2 ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -507,6 +629,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('formatBlock', activeStyles.h3 ? '<p>' : '<h3>')}
           className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition font-bold ${
             activeStyles.h3 ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -518,6 +641,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('formatBlock', '<p>')}
           className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
           title="Normal Paragraph"
@@ -529,6 +653,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
 
         {/* Inline Formatting (Bold, Italic, Underline, Strikethrough, Highlight) */}
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('bold')}
           className={`p-1.5 rounded-lg transition font-bold ${
             activeStyles.bold ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -539,6 +664,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('italic')}
           className={`p-1.5 rounded-lg transition italic ${
             activeStyles.italic ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -549,6 +675,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('underline')}
           className={`p-1.5 rounded-lg transition ${
             activeStyles.underline ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -559,6 +686,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('strikeThrough')}
           className={`p-1.5 rounded-lg transition ${
             activeStyles.strike ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -569,6 +697,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('hiliteColor', '#f59e0b40')}
           className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
           title="Highlight Text"
@@ -580,6 +709,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
 
         {/* Lists */}
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('insertUnorderedList')}
           className={`p-1.5 rounded-lg transition ${
             activeStyles.ul ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -590,6 +720,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('insertOrderedList')}
           className={`p-1.5 rounded-lg transition ${
             activeStyles.ol ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -603,6 +734,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
 
         {/* Text Alignment */}
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('justifyLeft')}
           className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
           title="Align Left"
@@ -611,6 +743,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('justifyCenter')}
           className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
           title="Align Center"
@@ -619,6 +752,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('justifyRight')}
           className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
           title="Align Right"
@@ -628,111 +762,33 @@ export const DocEditor: React.FC<DocEditorProps> = ({
 
         <div className="h-4 w-px bg-white/10 mx-1" />
 
-        {/* TABLE CONTROLS (Always available + Dynamic Contextual Options) */}
-        <div className="relative" ref={tableMenuRef}>
-          <button
-            onClick={() => setIsTableDropdownOpen(prev => !prev)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition font-medium ${
-              isInsideTable 
-                ? 'bg-[#16A085]/20 text-[#16A085] border border-[#16A085]/40 shadow-xs' 
-                : 'text-slate-300 hover:text-white hover:bg-white/10'
-            }`}
-            title="Table Operations"
-          >
-            <TableIcon className="w-4 h-4 text-emerald-400" />
-            <span className="text-[11px]">Table</span>
-            <ChevronDown className="w-3 h-3 opacity-60" />
-          </button>
+        {/* TABLE CONTROLS */}
+        <button
+          onMouseDown={preventBlur}
+          onClick={() => insertTable(3, 3)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition font-medium border border-emerald-500/20 shadow-xs"
+          title="Insert 3x3 Table Grid"
+        >
+          <TableIcon className="w-4 h-4" />
+          <span className="text-[11px] font-semibold">Table</span>
+        </button>
 
-          {/* Table Dropdown Menu */}
-          {isTableDropdownOpen && (
-            <div className="absolute left-0 top-full mt-1.5 w-52 glass-panel rounded-2xl shadow-2xl p-1.5 z-50 border border-[var(--border-line)] bg-[var(--surface-bg)] text-[var(--text-main)] text-xs animate-in fade-in duration-100">
-              <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Insert Table
-              </div>
-              <button
-                onClick={() => insertTable(3, 3)}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left transition"
-              >
-                <span>3 × 3 Grid</span>
-                <span className="text-[10px] text-slate-400 font-mono">Standard</span>
-              </button>
-              <button
-                onClick={() => insertTable(4, 4)}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left transition"
-              >
-                <span>4 × 4 Grid</span>
-                <span className="text-[10px] text-slate-400 font-mono">Large</span>
-              </button>
-              <button
-                onClick={() => insertTable(2, 2)}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left transition"
-              >
-                <span>2 × 2 Grid</span>
-                <span className="text-[10px] text-slate-400 font-mono">Compact</span>
-              </button>
-
-              {/* Context Actions (Active if inside a table) */}
-              {isInsideTable && (
-                <>
-                  <div className="my-1 border-t border-[var(--border-line)]" />
-                  <div className="px-2.5 py-1 text-[10px] font-bold text-[#16A085] uppercase tracking-wider">
-                    Edit Current Table
-                  </div>
-                  <button
-                    onClick={() => handleAddRow(true)}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left transition font-medium"
-                  >
-                    <Plus className="w-3.5 h-3.5 text-[#16A085]" />
-                    <span>Insert Row Below</span>
-                  </button>
-                  <button
-                    onClick={handleDeleteRow}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-rose-500/10 text-rose-400 text-left transition font-medium"
-                  >
-                    <Minus className="w-3.5 h-3.5 text-rose-400" />
-                    <span>Delete Current Row</span>
-                  </button>
-                  <button
-                    onClick={() => handleAddColumn(true)}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left transition font-medium"
-                  >
-                    <Plus className="w-3.5 h-3.5 text-[#16A085]" />
-                    <span>Insert Column Right</span>
-                  </button>
-                  <button
-                    onClick={handleDeleteColumn}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-rose-500/10 text-rose-400 text-left transition font-medium"
-                  >
-                    <Minus className="w-3.5 h-3.5 text-rose-400" />
-                    <span>Delete Current Column</span>
-                  </button>
-                  <div className="my-1 border-t border-[var(--border-line)]" />
-                  <button
-                    onClick={handleDeleteTable}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-rose-500/20 text-rose-400 text-left transition font-medium"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete Entire Table</span>
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* DYNAMIC FAST TABLE ACTIONS (Appears right in the ribbon when cursor is in any table cell) */}
+        {/* DYNAMIC FAST TABLE ACTIONS (Appears whenever cursor is in a table or table exists) */}
         {isInsideTable && (
-          <div className="flex items-center gap-1 bg-[#16A085]/15 border border-[#16A085]/30 px-2 py-0.5 rounded-xl animate-in fade-in duration-150">
+          <div className="flex items-center gap-1 bg-[#16A085]/15 border border-[#16A085]/40 px-2 py-0.5 rounded-xl animate-in fade-in duration-150">
+            <span className="text-[10px] font-bold text-[#16A085] uppercase tracking-wider mr-1 hidden sm:inline">Table:</span>
+            
             <button
+              onMouseDown={preventBlur}
               onClick={() => handleAddRow(true)}
               className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-[#16A085] hover:text-white text-[11px] font-semibold text-[var(--text-main)] transition"
               title="Add Row Below"
             >
-              <Plus className="w-3 h-3 text-[#16A085] group-hover:text-white" />
+              <Plus className="w-3 h-3 text-[#16A085]" />
               <span>Row</span>
             </button>
             <button
+              onMouseDown={preventBlur}
               onClick={handleDeleteRow}
               className="flex items-center gap-1 px-1.5 py-1 rounded-lg bg-white/10 hover:bg-rose-500/20 text-rose-400 text-[11px] font-semibold transition"
               title="Delete Current Row"
@@ -740,16 +796,20 @@ export const DocEditor: React.FC<DocEditorProps> = ({
               <Minus className="w-3 h-3" />
               <span>Row</span>
             </button>
+
             <div className="h-3 w-px bg-white/20 mx-0.5" />
+
             <button
+              onMouseDown={preventBlur}
               onClick={() => handleAddColumn(true)}
               className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-[#16A085] hover:text-white text-[11px] font-semibold text-[var(--text-main)] transition"
               title="Add Column Right"
             >
-              <Plus className="w-3 h-3 text-[#16A085] group-hover:text-white" />
+              <Plus className="w-3 h-3 text-[#16A085]" />
               <span>Col</span>
             </button>
             <button
+              onMouseDown={preventBlur}
               onClick={handleDeleteColumn}
               className="flex items-center gap-1 px-1.5 py-1 rounded-lg bg-white/10 hover:bg-rose-500/20 text-rose-400 text-[11px] font-semibold transition"
               title="Delete Current Column"
@@ -757,18 +817,23 @@ export const DocEditor: React.FC<DocEditorProps> = ({
               <Minus className="w-3 h-3" />
               <span>Col</span>
             </button>
+
             <div className="h-3 w-px bg-white/20 mx-0.5" />
+
             <button
+              onMouseDown={preventBlur}
               onClick={handleDeleteTable}
-              className="p-1 rounded-lg hover:bg-rose-500/20 text-rose-400 transition"
-              title="Delete Table"
+              className="flex items-center gap-1 px-1.5 py-1 rounded-lg hover:bg-rose-500/20 text-rose-400 text-[11px] font-semibold transition"
+              title="Delete Entire Table"
             >
               <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline text-[10px]">Delete</span>
             </button>
           </div>
         )}
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('formatBlock', activeStyles.blockquote ? '<p>' : '<blockquote>')}
           className={`p-1.5 rounded-lg transition ${
             activeStyles.blockquote ? 'bg-[#16A085] text-white shadow-xs' : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -779,6 +844,7 @@ export const DocEditor: React.FC<DocEditorProps> = ({
         </button>
 
         <button
+          onMouseDown={preventBlur}
           onClick={() => executeCommand('insertHorizontalRule')}
           className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition"
           title="Divider Line"
