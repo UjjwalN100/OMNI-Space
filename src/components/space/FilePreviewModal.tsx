@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSpace } from '../../context/SpaceContext';
 import { supabase } from '../../lib/supabase';
+import { DocEditor } from './DocEditor';
 import { 
   X, 
   Download, 
@@ -11,7 +12,9 @@ import {
   Save, 
   Sparkles,
   Layers,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 
 export const FilePreviewModal: React.FC = () => {
@@ -20,6 +23,7 @@ export const FilePreviewModal: React.FC = () => {
   const [fileName, setFileName] = useState<string>('');
   const [isEditing, setIsEditing] = useState(false);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     if (!previewFile) {
@@ -71,10 +75,30 @@ export const FilePreviewModal: React.FC = () => {
 
   const isImage = ['jpg', 'jpeg', 'png', 'webp', 'svg', 'gif'].includes(previewFile.extension.toLowerCase());
   const isPdf = previewFile.extension.toLowerCase() === 'pdf';
+  const isDoc = previewFile.category === 'docs' || (!isImage && !isPdf && previewFile.category !== 'sheets' && previewFile.category !== 'slides');
+
+  if (isDoc) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-2 sm:p-6 animate-in fade-in duration-150">
+        <div className={`w-full glass-panel rounded-3xl shadow-2xl flex flex-col border border-[var(--border-line)] bg-[var(--surface-bg)] text-[var(--text-main)] overflow-hidden transition-all duration-200 ${
+          isFullscreen ? 'fixed inset-0 h-screen max-w-none rounded-none' : 'max-w-5xl h-[90vh]'
+        }`}>
+          <DocEditor
+            file={previewFile}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={() => setIsFullscreen(prev => !prev)}
+            onClose={() => setPreviewFile(null)}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-6 animate-in fade-in duration-150">
-      <div className="w-full max-w-4xl h-[85vh] glass-panel rounded-3xl shadow-2xl flex flex-col border border-[var(--border-line)] bg-[var(--surface-bg)] text-[var(--text-main)] overflow-hidden">
+      <div className={`w-full glass-panel rounded-3xl shadow-2xl flex flex-col border border-[var(--border-line)] bg-[var(--surface-bg)] text-[var(--text-main)] overflow-hidden transition-all duration-200 ${
+        isFullscreen ? 'fixed inset-0 h-screen max-w-none rounded-none' : 'max-w-4xl h-[85vh]'
+      }`}>
         {/* Modal Header */}
         <div className="h-14 border-b border-[var(--border-line)] px-4 sm:px-6 flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -143,6 +167,14 @@ export const FilePreviewModal: React.FC = () => {
               title="Download file"
             >
               <Download className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={() => setIsFullscreen(prev => !prev)}
+              className="p-2 text-slate-400 hover:text-[var(--text-main)] rounded-xl hover:bg-white/5 transition"
+              title={isFullscreen ? "Exit Fullscreen" : "Fullscreen View"}
+            >
+              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
 
             <button
