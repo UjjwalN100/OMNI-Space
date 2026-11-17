@@ -124,6 +124,20 @@ export const DocEditor: React.FC<DocEditorProps> = ({
     if (editorRef.current) {
       const initialHtml = convertMarkdownToHtml(file.content || '');
       editorRef.current.innerHTML = initialHtml;
+
+      // Auto-normalize any legacy tables missing headers
+      const tables = editorRef.current.querySelectorAll('table');
+      tables.forEach(table => {
+        if (!table.querySelector('th') && table.rows.length > 0) {
+          const firstRow = table.rows[0];
+          Array.from(firstRow.cells).forEach((cell, idx) => {
+            const th = document.createElement('th');
+            th.innerHTML = cell.innerHTML.trim() && cell.innerHTML !== '<br>' ? cell.innerHTML : `Column ${idx + 1}`;
+            cell.replaceWith(th);
+          });
+        }
+      });
+
       updateMetrics(editorRef.current.innerText || '');
       const hasTable = !!editorRef.current.querySelector('table');
       setIsInsideTable(hasTable);
