@@ -439,7 +439,7 @@ export const SpaceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       lastAccessedAt: new Date().toISOString(),
-      content: `# ${name}\n\nStart typing your content here...`
+      content: category === 'sheets' ? '' : `# ${name}\n\nStart typing your content here...`
     };
 
     setFiles(prev => [newFile, ...prev]);

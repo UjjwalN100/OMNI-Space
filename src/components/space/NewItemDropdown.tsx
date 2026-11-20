@@ -17,7 +17,7 @@ interface NewItemDropdownProps {
 }
 
 export const NewItemDropdown: React.FC<NewItemDropdownProps> = ({ collapsed = false }) => {
-  const { createFolder, createDocument, uploadFiles } = useSpace();
+  const { createFolder, createDocument, uploadFiles, setPreviewFile } = useSpace();
   const [isOpen, setIsOpen] = useState(false);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [folderName, setFolderName] = useState('');
@@ -30,7 +30,10 @@ export const NewItemDropdown: React.FC<NewItemDropdownProps> = ({ collapsed = fa
     const defaultName = type === 'docs' ? 'Untitled Document' : type === 'sheets' ? 'Untitled Spreadsheet' : 'Untitled Presentation';
     const name = window.prompt(`Enter title for new ${type === 'docs' ? 'Document' : type === 'sheets' ? 'Spreadsheet' : 'Presentation'}:`, defaultName);
     if (name) {
-      createDocument(name, type);
+      const newFile = createDocument(name, type);
+      if (newFile) {
+        setPreviewFile(newFile);
+      }
     }
   };
 

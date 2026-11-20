@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSpace } from '../../context/SpaceContext';
 import { supabase } from '../../lib/supabase';
 import { DocEditor } from './DocEditor';
+import { SheetEditor } from './SheetEditor';
 import { 
   X, 
   Download, 
@@ -75,7 +76,8 @@ export const FilePreviewModal: React.FC = () => {
 
   const isImage = ['jpg', 'jpeg', 'png', 'webp', 'svg', 'gif'].includes(previewFile.extension.toLowerCase());
   const isPdf = previewFile.extension.toLowerCase() === 'pdf';
-  const isDoc = previewFile.category === 'docs' || (!isImage && !isPdf && previewFile.category !== 'sheets' && previewFile.category !== 'slides');
+  const isSheet = previewFile.category === 'sheets' || ['xlsx', 'xls', 'csv', 'sheet'].includes(previewFile.extension.toLowerCase());
+  const isDoc = (previewFile.category === 'docs' || ['doc', 'docx', 'txt', 'md'].includes(previewFile.extension.toLowerCase())) && !isSheet;
 
   if (isDoc) {
     return (
@@ -84,6 +86,23 @@ export const FilePreviewModal: React.FC = () => {
           isFullscreen ? 'fixed inset-0 h-screen max-w-none rounded-none' : 'max-w-5xl h-[90vh]'
         }`}>
           <DocEditor
+            file={previewFile}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={() => setIsFullscreen(prev => !prev)}
+            onClose={() => setPreviewFile(null)}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (isSheet) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-2 sm:p-6 animate-in fade-in duration-150">
+        <div className={`w-full glass-panel rounded-3xl shadow-2xl flex flex-col border border-[var(--border-line)] bg-[var(--surface-bg)] text-[var(--text-main)] overflow-hidden transition-all duration-200 ${
+          isFullscreen ? 'fixed inset-0 h-screen max-w-none rounded-none' : 'max-w-6xl h-[92vh]'
+        }`}>
+          <SheetEditor
             file={previewFile}
             isFullscreen={isFullscreen}
             onToggleFullscreen={() => setIsFullscreen(prev => !prev)}
