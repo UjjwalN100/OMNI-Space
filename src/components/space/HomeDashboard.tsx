@@ -223,7 +223,7 @@ export const HomeDashboard: React.FC = () => {
                 <div
                   key={file.id}
                   onClick={() => setPreviewFile(file)}
-                  className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.07] border border-[var(--border-line)] hover:border-[#16A085]/30 cursor-pointer transition-all hover:scale-[1.01] group relative"
+                  className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.07] border border-[var(--border-line)] hover:border-[#16A085]/40 cursor-pointer transition-colors group relative"
                 >
                   <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center shrink-0">
                     {getFileIcon(file.category)}

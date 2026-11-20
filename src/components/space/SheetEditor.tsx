@@ -572,7 +572,8 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
       setFormulaInput('');
       setCellEditValue('');
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      // Start typing directly into cell: replace content with new key
+      // Start typing directly into cell: replace content with new key (prevent default to avoid duplicate input)
+      e.preventDefault();
       setIsEditingCell(true);
       setCellEditValue(e.key);
       setFormulaInput(e.key);
