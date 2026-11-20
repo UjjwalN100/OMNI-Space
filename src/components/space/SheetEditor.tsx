@@ -115,6 +115,78 @@ export function expandRange(rangeStr: string): string[] {
   return coords;
 }
 
+// Normalize two coordinates into top-left:bottom-right range (e.g. 'D4', 'B2' -> 'B2:D4')
+export function normalizeRange(startCoord: string, endCoord: string): string {
+  if (startCoord === endCoord) return startCoord.toUpperCase();
+  const start = parseCoord(startCoord);
+  const end = parseCoord(endCoord);
+  if (!start || !end) return startCoord.toUpperCase();
+
+  const minCol = Math.min(start.colIdx, end.colIdx);
+  const maxCol = Math.max(start.colIdx, end.colIdx);
+  const minRow = Math.min(start.row, end.row);
+  const maxRow = Math.max(start.row, end.row);
+
+  const startLetter = indexToColLetter(minCol);
+  const endLetter = indexToColLetter(maxCol);
+
+  if (startLetter === endLetter && minRow === maxRow) {
+    return `${startLetter}${minRow}`;
+  }
+  return `${startLetter}${minRow}:${endLetter}${maxRow}`;
+}
+
+// Automatically detect contiguous adjacent numeric cells for formula suggestions (above or to the left)
+export function suggestRangeForCell(
+  targetCoord: string,
+  data: Record<string, CellData>,
+  rowCount: number,
+  colCount: number
+): string | null {
+  const coord = parseCoord(targetCoord);
+  if (!coord) return null;
+
+  const isNumeric = (c: string): boolean => {
+    const raw = data[c]?.raw;
+    if (!raw || !raw.trim()) return false;
+    if (raw.startsWith('=')) return true;
+    const clean = raw.replace(/[^0-9.-]/g, '');
+    return clean.length > 0 && !isNaN(Number(clean));
+  };
+
+  // 1. Scan vertically above (e.g. column sum)
+  if (coord.row > 1) {
+    let topRow = coord.row - 1;
+    let foundNumeric = false;
+    while (topRow >= 1 && isNumeric(`${coord.col}${topRow}`)) {
+      foundNumeric = true;
+      topRow--;
+    }
+    if (foundNumeric) {
+      const startRow = topRow + 1;
+      const endRow = coord.row - 1;
+      return startRow === endRow ? `${coord.col}${startRow}` : `${coord.col}${startRow}:${coord.col}${endRow}`;
+    }
+  }
+
+  // 2. Scan horizontally to the left (e.g. row sum)
+  if (coord.colIdx > 0) {
+    let leftCol = coord.colIdx - 1;
+    let foundNumeric = false;
+    while (leftCol >= 0 && isNumeric(`${indexToColLetter(leftCol)}${coord.row}`)) {
+      foundNumeric = true;
+      leftCol--;
+    }
+    if (foundNumeric) {
+      const startCol = indexToColLetter(leftCol + 1);
+      const endCol = indexToColLetter(coord.colIdx - 1);
+      return startCol === endCol ? `${startCol}${coord.row}` : `${startCol}${coord.row}:${endCol}${coord.row}`;
+    }
+  }
+
+  return null;
+}
+
 // Evaluate formula given sheet data
 export function evaluateFormula(formula: string, data: Record<string, CellData>, visited: Set<string> = new Set()): string | number {
   if (!formula.startsWith('=')) {
@@ -368,6 +440,11 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
   const [cellEditValue, setCellEditValue] = useState('');
   const [formulaInput, setFormulaInput] = useState('');
 
+  // Interactive mouse drag and range selection
+  const [isMouseDownOnGrid, setIsMouseDownOnGrid] = useState(false);
+  const [dragStartCoord, setDragStartCoord] = useState<string | null>(null);
+  const [selectedRange, setSelectedRange] = useState<string | null>(null);
+
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const activeInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -375,6 +452,84 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
   const currentSheet = sheets[activeSheetIndex] || sheets[0];
   const currentSheetRef = useRef(currentSheet);
   currentSheetRef.current = currentSheet;
+
+  // Determine if active cell or formula bar is in formula editing mode
+  const isInFormulaMode = useMemo(() => {
+    const text = (isEditingCell ? cellEditValue : formulaInput) || '';
+    return text.trim().startsWith('=');
+  }, [isEditingCell, cellEditValue, formulaInput]);
+
+  // Smart range suggestion based on adjacent contiguous numbers above or to the left
+  const smartSuggestedRange = useMemo(() => {
+    return suggestRangeForCell(activeCoord, currentSheet.data, currentSheet.rowCount, currentSheet.colCount);
+  }, [activeCoord, currentSheet]);
+
+  // Set of coordinates currently referenced in formula or selected range for visual grid outline
+  const formulaReferencedCoords = useMemo(() => {
+    const text = (isEditingCell ? cellEditValue : formulaInput) || '';
+    if (!text.startsWith('=')) {
+      if (selectedRange && selectedRange.includes(':')) {
+        return new Set(expandRange(selectedRange));
+      }
+      return new Set<string>();
+    }
+
+    const set = new Set<string>();
+    const matches = text.matchAll(/([A-Za-z]+[0-9]+)(?::([A-Za-z]+[0-9]+))?/g);
+    for (const match of matches) {
+      if (match[2]) {
+        const exp = expandRange(`${match[1]}:${match[2]}`);
+        exp.forEach(c => set.add(c));
+      } else if (match[1]) {
+        set.add(match[1].toUpperCase());
+      }
+    }
+    return set;
+  }, [isEditingCell, cellEditValue, formulaInput, selectedRange]);
+
+  // Multi-cell selection summary (Sum, Avg, Count)
+  const selectionSummary = useMemo(() => {
+    if (!selectedRange) return null;
+    const coords = selectedRange.includes(':') ? expandRange(selectedRange) : [selectedRange];
+    if (coords.length <= 1) return null;
+
+    let sum = 0;
+    let numericCount = 0;
+    let count = 0;
+
+    coords.forEach(c => {
+      const raw = currentSheet.data[c]?.raw;
+      if (raw !== undefined && raw !== null && raw.trim() !== '') {
+        count++;
+        const num = Number(raw.replace(/[^0-9.-]/g, ''));
+        if (!isNaN(num) && raw.replace(/[^0-9.-]/g, '').length > 0) {
+          sum += num;
+          numericCount++;
+        }
+      }
+    });
+
+    return {
+      range: selectedRange,
+      cellCount: coords.length,
+      count,
+      sum: numericCount > 0 ? Math.round(sum * 100) / 100 : null,
+      avg: numericCount > 0 ? Math.round((sum / numericCount) * 100) / 100 : null
+    };
+  }, [selectedRange, currentSheet.data]);
+
+  // Global mouseup handler to release grid drag selection
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      setIsMouseDownOnGrid(false);
+      setDragStartCoord(null);
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, []);
 
   // Focus spreadsheet container on mount for instant keyboard responsiveness
   useEffect(() => {
@@ -514,6 +669,36 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
     setFormulaInput(val);
     setCellEditValue(val);
   };
+
+  // Update formula string when user clicks or drags across cells on grid
+  const updateFormulaWithSelection = useCallback((rangeStr: string) => {
+    const current = (isEditingCell ? cellEditValue : formulaInput) || '=';
+
+    // If formula ends with an operator, paren, or comma: e.g. =SUM( or =A1+ or =
+    if (current.match(/[=(,+\-*/]$/)) {
+      const isFuncCall = current.match(/[=+\-*/(](?:SUM|AVG|AVERAGE|COUNT|MIN|MAX)\($/i) || current.match(/^[A-Za-z]+\($/i);
+      const next = isFuncCall ? `${current}${rangeStr})` : `${current}${rangeStr}`;
+      setFormulaInput(next);
+      setCellEditValue(next);
+      return;
+    }
+
+    // If formula already ends with a cell coordinate or range (with or without closing paren)
+    // Replace the last cell/range reference with the newly dragged/clicked range
+    const replaced = current.replace(/([A-Za-z]+[0-9]+(?::[A-Za-z]+[0-9]+)?)\)?$/, (match) => {
+      const hasClosingParen = match.endsWith(')');
+      return hasClosingParen ? `${rangeStr})` : rangeStr;
+    });
+
+    if (replaced !== current) {
+      setFormulaInput(replaced);
+      setCellEditValue(replaced);
+    } else {
+      const next = `${current}${rangeStr}`;
+      setFormulaInput(next);
+      setCellEditValue(next);
+    }
+  }, [isEditingCell, cellEditValue, formulaInput]);
 
   // Keyboard navigation across spreadsheet cells
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1033,8 +1218,8 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
             onMouseDown={e => e.preventDefault()}
             onClick={() => {
               const coord = parseCoord(activeCoord);
-              const defaultRange = coord && coord.row > 1 ? `${coord.col}1:${coord.col}${coord.row - 1}` : 'A1:A5';
-              const str = `=SUM(${defaultRange})`;
+              const targetRange = smartSuggestedRange || (coord && coord.row > 1 ? `${coord.col}1:${coord.col}${coord.row - 1}` : 'A1:A5');
+              const str = `=SUM(${targetRange})`;
               setFormulaInput(str);
               setCellEditValue(str);
               commitCellEdit(str, 'none');
@@ -1047,8 +1232,8 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
             onMouseDown={e => e.preventDefault()}
             onClick={() => {
               const coord = parseCoord(activeCoord);
-              const defaultRange = coord && coord.row > 1 ? `${coord.col}1:${coord.col}${coord.row - 1}` : 'A1:A5';
-              const str = `=AVG(${defaultRange})`;
+              const targetRange = smartSuggestedRange || (coord && coord.row > 1 ? `${coord.col}1:${coord.col}${coord.row - 1}` : 'A1:A5');
+              const str = `=AVG(${targetRange})`;
               setFormulaInput(str);
               setCellEditValue(str);
               commitCellEdit(str, 'none');
@@ -1061,8 +1246,8 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
             onMouseDown={e => e.preventDefault()}
             onClick={() => {
               const coord = parseCoord(activeCoord);
-              const defaultRange = coord && coord.row > 1 ? `${coord.col}1:${coord.col}${coord.row - 1}` : 'A1:A5';
-              const str = `=COUNT(${defaultRange})`;
+              const targetRange = smartSuggestedRange || (coord && coord.row > 1 ? `${coord.col}1:${coord.col}${coord.row - 1}` : 'A1:A5');
+              const str = `=COUNT(${targetRange})`;
               setFormulaInput(str);
               setCellEditValue(str);
               commitCellEdit(str, 'none');
@@ -1073,6 +1258,64 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
           </button>
         </div>
       </div>
+
+      {/* 3.1 SMART FORMULA AUTO-SUGGESTION BANNER */}
+      {smartSuggestedRange && (
+        <div className="border-b border-[#16A085]/20 bg-[#16A085]/[0.08] px-4 py-1.5 flex items-center gap-2 flex-wrap text-xs shrink-0 animate-in fade-in duration-100">
+          <div className="flex items-center gap-1.5 text-[#16A085] font-semibold text-[11px] shrink-0">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Suggested for <strong className="font-mono text-white bg-[#16A085]/30 px-1 py-0.5 rounded">{activeCoord}</strong>:</span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                const formula = `=SUM(${smartSuggestedRange})`;
+                setFormulaInput(formula);
+                setCellEditValue(formula);
+                commitCellEdit(formula, 'none');
+              }}
+              className="px-2.5 py-0.5 rounded-lg bg-[#16A085] text-white font-mono font-bold text-xs hover:bg-[#138d75] transition shadow-xs flex items-center gap-1"
+              title="Apply SUM formula"
+            >
+              <span>=SUM({smartSuggestedRange})</span>
+            </button>
+
+            <button
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                const formula = `=AVERAGE(${smartSuggestedRange})`;
+                setFormulaInput(formula);
+                setCellEditValue(formula);
+                commitCellEdit(formula, 'none');
+              }}
+              className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 font-mono text-xs transition"
+              title="Apply AVERAGE formula"
+            >
+              <span>=AVG({smartSuggestedRange})</span>
+            </button>
+
+            <button
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                const formula = `=COUNT(${smartSuggestedRange})`;
+                setFormulaInput(formula);
+                setCellEditValue(formula);
+                commitCellEdit(formula, 'none');
+              }}
+              className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 font-mono text-xs transition"
+              title="Apply COUNT formula"
+            >
+              <span>=COUNT({smartSuggestedRange})</span>
+            </button>
+          </div>
+
+          <div className="text-[11px] text-slate-400 ml-auto hidden sm:flex items-center gap-1 font-mono">
+            <span>Tip: Drag or click cells on sheet to select formula range</span>
+          </div>
+        </div>
+      )}
 
       {/* 4. SPREADSHEET GRID CANVAS */}
       <div className="flex-1 overflow-auto bg-black/[0.03] dark:bg-black/30 relative">
@@ -1124,6 +1367,7 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
                     const coord = `${colLetter}${rowNum}`;
                     const cellData = currentSheet.data[coord];
                     const isSelected = activeCoord === coord;
+                    const isFormulaReferenced = formulaReferencedCoords.has(coord) && coord !== activeCoord;
                     const style = cellData?.style || {};
 
                     // Computed displayed value
@@ -1134,7 +1378,24 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
                     return (
                       <td
                         key={coord}
-                        onClick={() => {
+                        onMouseDown={(e) => {
+                          if (e.button !== 0) return;
+
+                          // If in formula editing mode and clicking another cell:
+                          if (isInFormulaMode && coord !== activeCoord) {
+                            e.preventDefault();
+                            setIsMouseDownOnGrid(true);
+                            setDragStartCoord(coord);
+                            setSelectedRange(coord);
+                            updateFormulaWithSelection(coord);
+                            return;
+                          }
+
+                          // Standard single-cell selection
+                          setIsMouseDownOnGrid(true);
+                          setDragStartCoord(coord);
+                          setSelectedRange(coord);
+
                           containerRef.current?.focus();
                           if (activeCoord !== coord) {
                             if (isEditingCell) {
@@ -1142,6 +1403,15 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
                             }
                             setActiveCoord(coord);
                             setIsEditingCell(false);
+                          }
+                        }}
+                        onMouseEnter={() => {
+                          if (!isMouseDownOnGrid || !dragStartCoord) return;
+                          const range = normalizeRange(dragStartCoord, coord);
+                          setSelectedRange(range);
+
+                          if (isInFormulaMode) {
+                            updateFormulaWithSelection(range);
                           }
                         }}
                         onDoubleClick={() => {
@@ -1158,6 +1428,8 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
                         className={`h-7 w-28 px-2 border-b border-r border-[var(--border-line)] relative cursor-cell truncate transition-all text-xs ${
                           isSelected 
                             ? 'outline-2 outline-[#16A085] outline-offset-[-2px] z-10 bg-[#16A085]/10 shadow-sm font-semibold' 
+                            : isFormulaReferenced
+                            ? 'outline-2 outline-dashed outline-[#16A085] outline-offset-[-2px] z-10 bg-[#16A085]/15 font-semibold text-[#16A085] shadow-xs'
                             : 'hover:bg-white/[0.03]'
                         }`}
                       >
@@ -1167,6 +1439,7 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
                             type="text"
                             value={cellEditValue}
                             onClick={e => e.stopPropagation()}
+                            onMouseDown={e => e.stopPropagation()}
                             onChange={e => {
                               const val = e.target.value;
                               setCellEditValue(val);
@@ -1179,19 +1452,32 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
                                 commitCellEdit(e.currentTarget.value, e.shiftKey ? 'up' : 'down');
                               } else if (e.key === 'Tab') {
                                 e.preventDefault();
+                                if (smartSuggestedRange && (cellEditValue === '=' || cellEditValue === '=SUM(' || cellEditValue === '=AVG(' || cellEditValue === '=COUNT(')) {
+                                  const fn = cellEditValue === '=' ? 'SUM' : cellEditValue.replace(/^=|\($/g, '');
+                                  const auto = `=${fn}(${smartSuggestedRange})`;
+                                  setFormulaInput(auto);
+                                  setCellEditValue(auto);
+                                  commitCellEdit(auto, 'down');
+                                  return;
+                                }
                                 commitCellEdit(e.currentTarget.value, e.shiftKey ? 'left' : 'right');
                               } else if (e.key === 'Escape') {
                                 e.preventDefault();
                                 cancelCellEdit();
                               } else if (e.key === 'ArrowUp') {
-                                e.preventDefault();
-                                commitCellEdit(e.currentTarget.value, 'up');
+                                if (!isInFormulaMode) {
+                                  e.preventDefault();
+                                  commitCellEdit(e.currentTarget.value, 'up');
+                                }
                               } else if (e.key === 'ArrowDown') {
-                                e.preventDefault();
-                                commitCellEdit(e.currentTarget.value, 'down');
+                                if (!isInFormulaMode) {
+                                  e.preventDefault();
+                                  commitCellEdit(e.currentTarget.value, 'down');
+                                }
                               }
                             }}
                             onBlur={e => {
+                              if (isMouseDownOnGrid) return;
                               commitCellEdit(e.currentTarget.value, 'none');
                             }}
                             style={{
@@ -1247,13 +1533,24 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
           </button>
         </div>
 
-        {/* Selected Summary Metrics (Sum, Count) */}
-        <div className="hidden sm:flex items-center gap-3 text-[11px] text-slate-400 font-mono shrink-0">
-          <span>Cell: <strong className="text-[#16A085]">{activeCoord}</strong></span>
-          <span>•</span>
-          <span>Rows: {currentSheet.rowCount}</span>
-          <span>•</span>
-          <span>Cols: {currentSheet.colCount}</span>
+        {/* Selected Summary Metrics (Sum, Avg, Count) */}
+        <div className="hidden sm:flex items-center gap-3 text-[11px] font-mono shrink-0">
+          {selectionSummary && selectionSummary.cellCount > 1 ? (
+            <div className="flex items-center gap-2.5 bg-[#16A085]/10 text-[#16A085] px-2.5 py-0.5 rounded-lg border border-[#16A085]/20 font-bold">
+              <span>Selected: {selectionSummary.range}</span>
+              {selectionSummary.sum !== null && <span>• Sum: {selectionSummary.sum.toLocaleString()}</span>}
+              {selectionSummary.avg !== null && <span>• Avg: {selectionSummary.avg.toLocaleString()}</span>}
+              <span>• Count: {selectionSummary.count}</span>
+            </div>
+          ) : (
+            <>
+              <span className="text-slate-400">Cell: <strong className="text-[#16A085]">{activeCoord}</strong></span>
+              <span className="text-slate-600">•</span>
+              <span className="text-slate-400">Rows: {currentSheet.rowCount}</span>
+              <span className="text-slate-600">•</span>
+              <span className="text-slate-400">Cols: {currentSheet.colCount}</span>
+            </>
+          )}
         </div>
       </div>
     </div>
