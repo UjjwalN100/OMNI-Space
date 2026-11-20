@@ -153,6 +153,20 @@ export function evaluateFormula(formula: string, data: Record<string, CellData>,
     return coords;
   };
 
+  // Direct single cell reference (e.g. =B2)
+  const singleCellMatch = expr.match(/^([A-Za-z]+[0-9]+)$/);
+  if (singleCellMatch) {
+    const targetCoord = singleCellMatch[1].toUpperCase();
+    if (visited.has(targetCoord)) return '#CIRCULAR!';
+    const targetCell = data[targetCoord];
+    if (!targetCell || !targetCell.raw) return '';
+    if (targetCell.raw.startsWith('=')) {
+      const nextVisited = new Set(visited).add(targetCoord);
+      return evaluateFormula(targetCell.raw, data, nextVisited);
+    }
+    return targetCell.raw;
+  }
+
   // SUM(A1:A5)
   const sumMatch = expr.match(/^SUM\((.*)\)$/i);
   if (sumMatch) {
@@ -348,15 +362,24 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
   const [sheets, setSheets] = useState<SheetTab[]>(() => parseSheetContent(file.content || ''));
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
 
-  // Active cell selection
+  // Active cell selection & edit buffer
   const [activeCoord, setActiveCoord] = useState('A1');
   const [isEditingCell, setIsEditingCell] = useState(false);
+  const [cellEditValue, setCellEditValue] = useState('');
   const [formulaInput, setFormulaInput] = useState('');
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const activeInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const currentSheet = sheets[activeSheetIndex] || sheets[0];
+  const currentSheetRef = useRef(currentSheet);
+  currentSheetRef.current = currentSheet;
+
+  // Focus spreadsheet container on mount for instant keyboard responsiveness
+  useEffect(() => {
+    containerRef.current?.focus();
+  }, []);
 
   // Debounced cloud auto-save
   const triggerAutoSave = useCallback((updatedSheets: SheetTab[], newTitle: string) => {
@@ -380,15 +403,26 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
     }, 800);
   }, [file.id, activeSheetIndex, updateFileContent]);
 
-  // Sync formula input when selected cell changes
+  // Sync formula input and cell buffer ONLY when selected cell or sheet tab changes
   useEffect(() => {
-    const cell = currentSheet?.data[activeCoord];
-    setFormulaInput(cell?.raw || '');
+    const cell = currentSheetRef.current?.data[activeCoord];
+    const raw = cell?.raw || '';
+    setFormulaInput(raw);
+    setCellEditValue(raw);
     setIsEditingCell(false);
-  }, [activeCoord, activeSheetIndex, currentSheet]);
+  }, [activeCoord, activeSheetIndex]);
 
-  // Update cell raw value
-  const updateCellValue = (coord: string, newRaw: string) => {
+  // Auto-focus input when entering edit mode and put caret at the end
+  useEffect(() => {
+    if (isEditingCell && activeInputRef.current) {
+      activeInputRef.current.focus();
+      const len = activeInputRef.current.value.length;
+      activeInputRef.current.setSelectionRange(len, len);
+    }
+  }, [isEditingCell]);
+
+  // Update cell raw value in state and schedule cloud auto-save
+  const updateCellValue = useCallback((coord: string, newRaw: string) => {
     setSheets(prevSheets => {
       const nextSheets = [...prevSheets];
       const sheet = { ...nextSheets[activeSheetIndex] };
@@ -410,10 +444,10 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
       triggerAutoSave(nextSheets, title);
       return nextSheets;
     });
-  };
+  }, [activeSheetIndex, title, triggerAutoSave]);
 
   // Update cell formatting style (Bold, Italic, Align, Format, Colors)
-  const updateCellStyle = (coord: string, styleUpdates: Partial<CellStyle>) => {
+  const updateCellStyle = useCallback((coord: string, styleUpdates: Partial<CellStyle>) => {
     setSheets(prevSheets => {
       const nextSheets = [...prevSheets];
       const sheet = { ...nextSheets[activeSheetIndex] };
@@ -433,37 +467,70 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
       triggerAutoSave(nextSheets, title);
       return nextSheets;
     });
-  };
+  }, [activeSheetIndex, title, triggerAutoSave]);
+
+  // Commit cell editing buffer to state and optionally navigate
+  const commitCellEdit = useCallback((
+    valueToCommit?: string,
+    direction: 'down' | 'up' | 'right' | 'left' | 'none' = 'none'
+  ) => {
+    const activeSheet = currentSheetRef.current;
+    const finalVal = valueToCommit !== undefined ? valueToCommit : cellEditValue;
+    const currentVal = activeSheet?.data[activeCoord]?.raw || '';
+
+    if (finalVal !== currentVal) {
+      updateCellValue(activeCoord, finalVal);
+    }
+
+    setIsEditingCell(false);
+
+    if (direction !== 'none') {
+      const coord = parseCoord(activeCoord);
+      if (!coord) return;
+      if (direction === 'down' && coord.row < activeSheet.rowCount) {
+        setActiveCoord(`${coord.col}${coord.row + 1}`);
+      } else if (direction === 'up' && coord.row > 1) {
+        setActiveCoord(`${coord.col}${coord.row - 1}`);
+      } else if (direction === 'right' && coord.colIdx < activeSheet.colCount - 1) {
+        setActiveCoord(`${indexToColLetter(coord.colIdx + 1)}${coord.row}`);
+      } else if (direction === 'left' && coord.colIdx > 0) {
+        setActiveCoord(`${indexToColLetter(coord.colIdx - 1)}${coord.row}`);
+      }
+    }
+  }, [cellEditValue, activeCoord, updateCellValue]);
+
+  // Cancel cell editing and revert to previous raw value
+  const cancelCellEdit = useCallback(() => {
+    setIsEditingCell(false);
+    const cell = currentSheetRef.current?.data[activeCoord];
+    const orig = cell?.raw || '';
+    setFormulaInput(orig);
+    setCellEditValue(orig);
+  }, [activeCoord]);
 
   // Handle formula bar input change
   const handleFormulaBarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setFormulaInput(val);
-    updateCellValue(activeCoord, val);
-  };
-
-  // Commit editing and move to next cell
-  const commitCellEdit = (moveDown = true) => {
-    setIsEditingCell(false);
-    if (moveDown) {
-      const coord = parseCoord(activeCoord);
-      if (coord && coord.row < currentSheet.rowCount) {
-        setActiveCoord(`${coord.col}${coord.row + 1}`);
-      }
-    }
+    setCellEditValue(val);
   };
 
   // Keyboard navigation across spreadsheet cells
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (isEditingCell) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commitCellEdit(true);
-      } else if (e.key === 'Escape') {
-        setIsEditingCell(false);
-        const cell = currentSheet?.data[activeCoord];
-        setFormulaInput(cell?.raw || '');
-      }
+    // If user is editing the cell, the active input handles its own keystrokes
+    if (isEditingCell) return;
+
+    // Quick formatting shortcuts
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      const currentCell = currentSheetRef.current?.data[activeCoord];
+      updateCellStyle(activeCoord, { bold: !currentCell?.style?.bold });
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') {
+      e.preventDefault();
+      const currentCell = currentSheetRef.current?.data[activeCoord];
+      updateCellStyle(activeCoord, { italic: !currentCell?.style?.italic });
       return;
     }
 
@@ -473,24 +540,42 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
     if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (coord.row > 1) setActiveCoord(`${coord.col}${coord.row - 1}`);
-    } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
+    } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (coord.row < currentSheet.rowCount) setActiveCoord(`${coord.col}${coord.row + 1}`);
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       if (coord.colIdx > 0) setActiveCoord(`${indexToColLetter(coord.colIdx - 1)}${coord.row}`);
-    } else if (e.key === 'ArrowRight' || e.key === 'Tab') {
+    } else if (e.key === 'ArrowRight') {
       e.preventDefault();
       if (coord.colIdx < currentSheet.colCount - 1) setActiveCoord(`${indexToColLetter(coord.colIdx + 1)}${coord.row}`);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (coord.colIdx > 0) setActiveCoord(`${indexToColLetter(coord.colIdx - 1)}${coord.row}`);
+      } else {
+        if (coord.colIdx < currentSheet.colCount - 1) setActiveCoord(`${indexToColLetter(coord.colIdx + 1)}${coord.row}`);
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (coord.row > 1) setActiveCoord(`${coord.col}${coord.row - 1}`);
+      } else {
+        if (coord.row < currentSheet.rowCount) setActiveCoord(`${coord.col}${coord.row + 1}`);
+      }
+    } else if (e.key === 'F2') {
+      e.preventDefault();
+      setIsEditingCell(true);
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       updateCellValue(activeCoord, '');
       setFormulaInput('');
+      setCellEditValue('');
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      // Start typing directly into cell
+      // Start typing directly into cell: replace content with new key
       setIsEditingCell(true);
+      setCellEditValue(e.key);
       setFormulaInput(e.key);
-      updateCellValue(activeCoord, e.key);
     }
   };
 
@@ -543,10 +628,15 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
         }
       });
 
-      sheet.rowCount -= 1;
+      const newRowCount = sheet.rowCount - 1;
+      sheet.rowCount = newRowCount;
       sheet.data = nextData;
       next[activeSheetIndex] = sheet;
       triggerAutoSave(next, title);
+
+      if (coord.row > newRowCount) {
+        setActiveCoord(`${coord.col}${Math.max(1, newRowCount)}`);
+      }
       return next;
     });
   };
@@ -599,10 +689,15 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
         }
       });
 
-      sheet.colCount -= 1;
+      const newColCount = sheet.colCount - 1;
+      sheet.colCount = newColCount;
       sheet.data = nextData;
       next[activeSheetIndex] = sheet;
       triggerAutoSave(next, title);
+
+      if (coord.colIdx >= newColCount) {
+        setActiveCoord(`${indexToColLetter(Math.max(0, newColCount - 1))}${coord.row}`);
+      }
       return next;
     });
   };
@@ -661,7 +756,8 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
 
   return (
     <div 
-      className="flex flex-col h-full bg-[var(--bg-main)] text-[var(--text-main)] overflow-hidden select-none"
+      ref={containerRef}
+      className="flex flex-col h-full bg-[var(--bg-main)] text-[var(--text-main)] overflow-hidden select-none focus:outline-none"
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
@@ -881,6 +977,7 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
           onClick={() => {
             updateCellValue(activeCoord, '');
             setFormulaInput('');
+            setCellEditValue('');
           }}
           className="p-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 transition ml-auto"
           title="Clear Active Cell"
@@ -906,6 +1003,25 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
           type="text"
           value={formulaInput}
           onChange={handleFormulaBarChange}
+          onFocus={() => {
+            const cell = currentSheetRef.current?.data[activeCoord];
+            const raw = cell?.raw || '';
+            setFormulaInput(raw);
+            setCellEditValue(raw);
+          }}
+          onKeyDown={e => {
+            e.stopPropagation();
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitCellEdit(formulaInput, 'down');
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              cancelCellEdit();
+            }
+          }}
+          onBlur={() => {
+            commitCellEdit(formulaInput, 'none');
+          }}
           placeholder="Enter value or formula (e.g. =SUM(A1:A5), =C2*D2)..."
           className="flex-1 bg-transparent text-sm text-[var(--text-main)] font-mono focus:outline-none focus:ring-1 focus:ring-[#16A085] rounded-lg px-2 py-1 border border-transparent hover:border-white/10 transition"
         />
@@ -913,32 +1029,44 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
         {/* Quick Function Chips */}
         <div className="hidden md:flex items-center gap-1.5 text-[11px]">
           <button
+            onMouseDown={e => e.preventDefault()}
             onClick={() => {
-              const str = `=SUM()`;
+              const coord = parseCoord(activeCoord);
+              const defaultRange = coord && coord.row > 1 ? `${coord.col}1:${coord.col}${coord.row - 1}` : 'A1:A5';
+              const str = `=SUM(${defaultRange})`;
               setFormulaInput(str);
-              updateCellValue(activeCoord, str);
+              setCellEditValue(str);
+              commitCellEdit(str, 'none');
             }}
-            className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 font-mono text-slate-300 transition"
+            className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-[#16A085]/20 hover:text-[#16A085] border border-white/10 font-mono text-slate-300 transition"
           >
             SUM
           </button>
           <button
+            onMouseDown={e => e.preventDefault()}
             onClick={() => {
-              const str = `=AVERAGE()`;
+              const coord = parseCoord(activeCoord);
+              const defaultRange = coord && coord.row > 1 ? `${coord.col}1:${coord.col}${coord.row - 1}` : 'A1:A5';
+              const str = `=AVG(${defaultRange})`;
               setFormulaInput(str);
-              updateCellValue(activeCoord, str);
+              setCellEditValue(str);
+              commitCellEdit(str, 'none');
             }}
-            className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 font-mono text-slate-300 transition"
+            className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-[#16A085]/20 hover:text-[#16A085] border border-white/10 font-mono text-slate-300 transition"
           >
             AVG
           </button>
           <button
+            onMouseDown={e => e.preventDefault()}
             onClick={() => {
-              const str = `=COUNT()`;
+              const coord = parseCoord(activeCoord);
+              const defaultRange = coord && coord.row > 1 ? `${coord.col}1:${coord.col}${coord.row - 1}` : 'A1:A5';
+              const str = `=COUNT(${defaultRange})`;
               setFormulaInput(str);
-              updateCellValue(activeCoord, str);
+              setCellEditValue(str);
+              commitCellEdit(str, 'none');
             }}
-            className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 font-mono text-slate-300 transition"
+            className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-[#16A085]/20 hover:text-[#16A085] border border-white/10 font-mono text-slate-300 transition"
           >
             COUNT
           </button>
@@ -1006,8 +1134,14 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
                       <td
                         key={coord}
                         onClick={() => {
-                          setActiveCoord(coord);
-                          setIsEditingCell(false);
+                          containerRef.current?.focus();
+                          if (activeCoord !== coord) {
+                            if (isEditingCell) {
+                              commitCellEdit(cellEditValue, 'none');
+                            }
+                            setActiveCoord(coord);
+                            setIsEditingCell(false);
+                          }
                         }}
                         onDoubleClick={() => {
                           setActiveCoord(coord);
@@ -1030,14 +1164,41 @@ export const SheetEditor: React.FC<SheetEditorProps> = ({
                           <input
                             ref={activeInputRef}
                             type="text"
-                            autoFocus
-                            value={formulaInput}
+                            value={cellEditValue}
+                            onClick={e => e.stopPropagation()}
                             onChange={e => {
-                              setFormulaInput(e.target.value);
-                              updateCellValue(coord, e.target.value);
+                              const val = e.target.value;
+                              setCellEditValue(val);
+                              setFormulaInput(val);
                             }}
-                            onBlur={() => commitCellEdit(false)}
-                            className="absolute inset-0 w-full h-full px-2 bg-[var(--surface-bg)] text-[var(--text-main)] font-mono text-xs focus:outline-none ring-2 ring-[#16A085]"
+                            onKeyDown={e => {
+                              e.stopPropagation();
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                commitCellEdit(e.currentTarget.value, e.shiftKey ? 'up' : 'down');
+                              } else if (e.key === 'Tab') {
+                                e.preventDefault();
+                                commitCellEdit(e.currentTarget.value, e.shiftKey ? 'left' : 'right');
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                cancelCellEdit();
+                              } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                commitCellEdit(e.currentTarget.value, 'up');
+                              } else if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                commitCellEdit(e.currentTarget.value, 'down');
+                              }
+                            }}
+                            onBlur={e => {
+                              commitCellEdit(e.currentTarget.value, 'none');
+                            }}
+                            style={{
+                              textAlign: style.align || 'left',
+                              fontWeight: style.bold ? 'bold' : 'normal',
+                              fontStyle: style.italic ? 'italic' : 'normal'
+                            }}
+                            className="absolute inset-0 w-full h-full px-2 bg-[var(--surface-bg)] text-[var(--text-main)] font-mono text-xs focus:outline-none ring-2 ring-[#16A085] z-30 shadow-md"
                           />
                         ) : (
                           <span className="truncate block">
