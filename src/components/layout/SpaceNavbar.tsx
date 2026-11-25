@@ -27,7 +27,7 @@ export const SpaceNavbar: React.FC<SpaceNavbarProps> = ({ theme, toggleTheme }) 
   const [isMainMenuOpen, setIsMainMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-  const omniTimeUrl = import.meta.env.VITE_OMNI_TIME_URL || 'https://omni-tm.pages.dev';
+  const omniTimeUrl = import.meta.env.VITE_OMNI_TIME_URL || 'https://omni-tm.ujjwalnikam100.workers.dev';
 
   const ecosystemApps = [
     { id: 'space', name: 'OMNI Space', icon: Layers, status: 'active', url: '#' },
